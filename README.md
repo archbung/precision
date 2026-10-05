@@ -317,6 +317,29 @@ Migration version 4 adds independent workout-owned prescription tables and sourc
 metadata. Existing version 3 workouts receive empty intentions and no provenance;
 existing routines, exercises, and performances remain intact.
 
+### Reuse a workout's current source
+
+```sh
+precision workout reuse 1 --date 2026-10-06 --start 2026-10-06T18:00:00+07:00
+```
+
+`workout reuse ID --date YYYY-MM-DD [--start RFC3339]` accepts either a draft
+or a finished workout and creates a new draft from its current live source
+routine. Source lookup and the complete intention copy run in one transaction,
+using the same copy behavior as `workout start --routine ID`. The new draft
+has fresh intention identities, current source provenance, and empty actual
+activity; prior session notes and times are not copied. Its supplied date and
+optional start follow the normal workout timestamp validation.
+
+Reuse reads current prescriptions, including notes, rest, and supersets, even
+after source edits or independent adjustments to the historical intention.
+It never copies preserved intention or performance. Unknown workout IDs,
+routine-free workouts, and deleted sources fail with an error and no new draft.
+Deleting a source preserves both draft and finished workout records across
+restarts. A routine created under the same name receives a different ID and
+does not restore reuse for those records. Direct `workout start --routine ID`
+remains available for live routines and rejects missing/deleted IDs atomically.
+
 
 ## Rest transitions and supersets
 

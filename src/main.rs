@@ -75,6 +75,17 @@ enum RoutineCommand {
     after_help = "Update replaces metadata and actual sets using --file PATH; show --json exports schema_version: 1 with intention and provenance. Remove intention/source fields for actual updates; use intention update for prescribed activity. Completed workouts are read-only. See README.md for schema. Intended and actual rest/supersets are independent. Rest uses N-1 optional seconds; supersets reference owner-local set IDs. Reordering requires replacement rest."
 )]
 enum WorkoutCommand {
+    /// Start an empty draft using the workout's current source routine.
+    #[command(
+        after_help = "Copies current prescriptions, not preserved intention or performance. Fails if the workout has no source routine or its source was deleted."
+    )]
+    Reuse {
+        id: i64,
+        #[arg(long)]
+        date: String,
+        #[arg(long)]
+        start: Option<String>,
+    },
     /// Compare independent prescribed and actual lists by exercise and set type.
     Compare {
         id: i64,
@@ -421,6 +432,10 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let mut store = Store::open(&path)?;
     match cli.command {
         Command::Workout { command } => match command {
+            WorkoutCommand::Reuse { id, date, start } => {
+                let workout = store.reuse_workout(id, date, start)?;
+                print_workout(&store, &workout, false)?;
+            }
             WorkoutCommand::Compare { id } => comparison::print(&store, &store.workout(id)?)?,
             WorkoutCommand::Intention {
                 command: IntentionCommand::Update { id, file },

@@ -96,10 +96,39 @@ impl Store {
         start: Option<String>,
         routine_id: Option<i64>,
     ) -> Result<Workout> {
+        self.start_from_source(date, start, routine_id, None)
+    }
+    pub fn reuse_workout(
+        &mut self,
+        id: i64,
+        date: String,
+        start: Option<String>,
+    ) -> Result<Workout> {
+        self.start_from_source(date, start, None, Some(id))
+    }
+    fn start_from_source(
+        &mut self,
+        date: String,
+        start: Option<String>,
+        routine_id: Option<i64>,
+        workout_id: Option<i64>,
+    ) -> Result<Workout> {
         validate_times(&date, &start, &None)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let routine_id = if let Some(id) = workout_id {
+            let source = read(&tx, id)?;
+            Some(source.source_routine_id.ok_or_else(|| {
+                if source.original_source_id.is_some() {
+                    "cannot reuse workout: source routine was deleted"
+                } else {
+                    "cannot reuse workout: workout has no source routine"
+                }
+            })?)
+        } else {
+            routine_id
+        };
         let routine = routine_id
             .map(|id| crate::routines::read(&tx, id))
             .transpose()?;

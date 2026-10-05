@@ -279,3 +279,206 @@ fn actual_export_is_editable_without_prescription_or_provenance_fields() {
     let path = write(&db, &document);
     ok(&db, &["workout", "update", "1", "--file", &path]);
 }
+
+#[test]
+fn historical_reuse_copies_current_source_not_intention_or_performance() {
+    let db = TempDir::new().unwrap();
+    exercise(&db, "Squat", "repetitions", "external");
+    let path = write(
+        &db,
+        &json!({"schema_version":1,"name":"Source","sets":[{"portions":[{"exercise_id":1,"repetitions":5}]}]}),
+    );
+    ok(&db, &["routine", "create", "--file", &path]);
+    ok(
+        &db,
+        &["workout", "start", "--date", "2026-10-05", "--routine", "1"],
+    );
+    let path = write(
+        &db,
+        &json!({"schema_version":1,"notes":"today only","sets":[{"portions":[{"exercise_id":1,"repetitions":3}]}]}),
+    );
+    ok(
+        &db,
+        &["workout", "intention", "update", "1", "--file", &path],
+    );
+    let path = write(
+        &db,
+        &json!({"schema_version":1,"date":"2026-10-05","notes":"actual notes","sets":[{"portions":[{"exercise_id":1,"repetitions":9}]}]}),
+    );
+    ok(&db, &["workout", "update", "1", "--file", &path]);
+    ok(&db, &["workout", "finish", "1"]);
+    let historical = show(&db, "1");
+    let path = write(
+        &db,
+        &json!({"schema_version":1,"name":"Renamed","notes":"current notes","rest":[0,1.25],"sets":[
+        {"type":"warmup","kilograms":0,"rpe":5.5,"load_description":"bar","notes":"set note","portions":[{"exercise_id":1,"repetitions":8,"notes":"portion note"},{"exercise_id":1}]},
+        {"portions":[{"exercise_id":1,"repetitions":0}]},
+        {"portions":[{"exercise_id":1,"repetitions":null}]}]}),
+    );
+    ok(&db, &["routine", "update", "1", "--file", &path]);
+    let mut source: Value =
+        serde_json::from_str(&ok(&db, &["routine", "show", "1", "--json"])).unwrap();
+    source["supersets"] = json!([{"set_ids":[source["sets"][0]["id"],source["sets"][2]["id"]]}]);
+    let path = write(&db, &source);
+    ok(&db, &["routine", "update", "1", "--file", &path]);
+    ok(
+        &db,
+        &[
+            "workout",
+            "reuse",
+            "1",
+            "--date",
+            "2026-10-06",
+            "--start",
+            "2026-10-06T23:50:00+07:00",
+        ],
+    );
+    let reused = show(&db, "2");
+    assert_eq!(reused["state"], "draft");
+    assert_eq!(reused["date"], "2026-10-06");
+    assert_eq!(reused["start"], "2026-10-06T23:50:00+07:00");
+    assert_eq!(reused["end"], Value::Null);
+    assert_eq!(reused["notes"], Value::Null);
+    assert_eq!(reused["sets"], json!([]));
+    assert_eq!(reused["rest"], json!([]));
+    assert_eq!(reused["supersets"], json!([]));
+    assert_eq!(reused["source_routine_id"], 1);
+    assert_eq!(reused["original_source_name"], "Renamed");
+    assert_eq!(reused["intention"]["notes"], "current notes");
+    assert_eq!(reused["intention"]["rest"], json!([0, 1.25]));
+    assert_eq!(reused["intention"]["sets"][0]["type"], "warmup");
+    assert_eq!(reused["intention"]["sets"][0]["kilograms"], 0);
+    assert_eq!(reused["intention"]["sets"][0]["rpe"], 5.5);
+    assert_eq!(reused["intention"]["sets"][0]["load_description"], "bar");
+    assert_eq!(reused["intention"]["sets"][0]["notes"], "set note");
+    assert_eq!(
+        reused["intention"]["sets"][0]["portions"][0]["repetitions"],
+        8
+    );
+    assert_eq!(
+        reused["intention"]["sets"][0]["portions"][0]["notes"],
+        "portion note"
+    );
+    assert_eq!(
+        reused["intention"]["sets"][0]["portions"][1]["repetitions"],
+        Value::Null
+    );
+    assert_eq!(
+        reused["intention"]["sets"][1]["portions"][0]["repetitions"],
+        0
+    );
+    assert_eq!(
+        reused["intention"]["supersets"][0]["set_ids"],
+        json!([
+            reused["intention"]["sets"][0]["id"],
+            reused["intention"]["sets"][2]["id"]
+        ])
+    );
+    assert_ne!(
+        reused["intention"]["sets"][0]["id"],
+        historical["intention"]["sets"][0]["id"]
+    );
+    assert_eq!(show(&db, "1"), historical);
+    ok(&db, &["workout", "reuse", "2", "--date", "2026-10-07"]);
+    assert_eq!(show(&db, "3")["start"], Value::Null);
+    assert_ne!(
+        show(&db, "3")["intention"]["sets"][0]["id"],
+        reused["intention"]["sets"][0]["id"]
+    );
+}
+
+#[test]
+fn reuse_errors_preserve_history_and_never_create_partial_drafts() {
+    let db = TempDir::new().unwrap();
+    exercise(&db, "Squat", "repetitions", "external");
+    ok(&db, &["workout", "start", "--date", "2026-10-05"]);
+    let routine = json!({"schema_version":1,"name":"Source","sets":[{"portions":[{"exercise_id":1,"repetitions":5}]}]});
+    let path = write(&db, &routine);
+    ok(&db, &["routine", "create", "--file", &path]);
+    for _ in 0..2 {
+        ok(
+            &db,
+            &["workout", "start", "--date", "2026-10-05", "--routine", "1"],
+        );
+    }
+    let path = write(
+        &db,
+        &json!({"schema_version":1,"date":"2026-10-05","sets":[{"portions":[{"exercise_id":1,"repetitions":9}]}]}),
+    );
+    for id in ["2", "3"] {
+        ok(&db, &["workout", "update", id, "--file", &path]);
+    }
+    ok(&db, &["workout", "finish", "3"]);
+    let list = || -> Value {
+        serde_json::from_str(&ok(&db, &["workout", "list", "--drafts", "--json"])).unwrap()
+    };
+    for (args, message) in [
+        (
+            vec!["workout", "reuse", "1", "--date", "2026-10-06"],
+            "no source routine",
+        ),
+        (
+            vec!["workout", "reuse", "999", "--date", "2026-10-06"],
+            "workout",
+        ),
+        (vec!["workout", "reuse", "2", "--date", "invalid"], "date"),
+        (
+            vec![
+                "workout",
+                "reuse",
+                "2",
+                "--date",
+                "2026-10-06",
+                "--start",
+                "2026-10-07T00:00:00Z",
+            ],
+            "date",
+        ),
+        (
+            vec![
+                "workout",
+                "start",
+                "--date",
+                "2026-10-06",
+                "--routine",
+                "999",
+            ],
+            "routine",
+        ),
+    ] {
+        let before = list();
+        let out = run(&db, &args);
+        assert!(!out.status.success());
+        assert!(String::from_utf8_lossy(&out.stderr).contains(message));
+        assert_eq!(list(), before);
+    }
+    let snapshots = [show(&db, "2"), show(&db, "3")];
+    ok(&db, &["routine", "delete", "1"]);
+    let path = write(&db, &routine);
+    ok(&db, &["routine", "create", "--file", &path]);
+    for (id, mut expected) in ["2", "3"].into_iter().zip(snapshots) {
+        expected["source_routine_id"] = Value::Null;
+        assert_eq!(show(&db, id), expected);
+        let before = list();
+        let out = run(&db, &["workout", "reuse", id, "--date", "2026-10-06"]);
+        assert!(!out.status.success());
+        assert!(String::from_utf8_lossy(&out.stderr).contains("source routine was deleted"));
+        assert_eq!(list(), before);
+    }
+    let before = list();
+    assert!(
+        !run(
+            &db,
+            &["workout", "start", "--date", "2026-10-06", "--routine", "1"]
+        )
+        .status
+        .success()
+    );
+    assert_eq!(list(), before);
+    ok(
+        &db,
+        &["workout", "start", "--date", "2026-10-06", "--routine", "2"],
+    );
+    assert_eq!(show(&db, "4")["source_routine_id"], 2);
+    assert_eq!(show(&db, "4")["sets"], json!([]));
+}
