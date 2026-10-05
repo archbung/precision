@@ -1,6 +1,8 @@
+mod aggregate_values;
 mod exercise_types;
 mod exercises;
 mod routines;
+mod workouts;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use exercise_types::{LoadConvention, Measurement};
 use exercises::{Exercise, Store};
@@ -9,7 +11,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     version,
-    about = "Define exercises and reusable workout routines",
+    about = "Define exercises, prescribe routines, and record workouts",
     after_help = "Default database: $HOME/.precision/precision.sqlite3. Use --db PATH to override."
 )]
 struct Cli {
@@ -20,6 +22,10 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    Workout {
+        #[command(subcommand)]
+        command: WorkoutCommand,
+    },
     Routine {
         #[command(subcommand)]
         command: RoutineCommand,
@@ -58,6 +64,43 @@ enum RoutineCommand {
         file: PathBuf,
     },
     Delete {
+        id: i64,
+    },
+}
+#[derive(Subcommand)]
+#[command(
+    about = "Standalone resumable workout drafts",
+    after_help = "Update replaces metadata and actual sets using --file PATH; show --json exports an editable schema_version: 1 document. Completed workouts are read-only. See README.md for schema. Rest and groups are not yet supported."
+)]
+enum WorkoutCommand {
+    Start {
+        #[arg(long)]
+        date: String,
+        #[arg(long)]
+        start: Option<String>,
+    },
+    List {
+        #[arg(long)]
+        drafts: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Show {
+        id: i64,
+        #[arg(long)]
+        json: bool,
+    },
+    Update {
+        id: i64,
+        #[arg(long)]
+        file: PathBuf,
+    },
+    Finish {
+        id: i64,
+        #[arg(long)]
+        end: Option<String>,
+    },
+    Discard {
         id: i64,
     },
 }
@@ -221,6 +264,80 @@ fn print_routine(
     }
     Ok(())
 }
+fn print_workout(
+    store: &Store,
+    workout: &workouts::Workout,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(workout)?);
+        return Ok(());
+    }
+    println!(
+        "{}: {} workout ({})\n  Start: {}\n  End: {}",
+        workout.id.unwrap(),
+        workout.state,
+        workout.date,
+        workout.start.as_deref().unwrap_or("unknown"),
+        workout.end.as_deref().unwrap_or("unknown")
+    );
+    if let Some(notes) = &workout.notes {
+        println!("  Session notes: {notes}");
+    }
+    for (index, set) in workout.sets.iter().enumerate() {
+        println!(
+            "  Set {} (ID {}, {}): kilograms {}, RPE {}",
+            index + 1,
+            set.id.unwrap(),
+            set.kind,
+            set.kilograms
+                .as_ref()
+                .map_or("unknown".into(), ToString::to_string),
+            set.rpe
+                .as_ref()
+                .map_or("unknown".into(), ToString::to_string)
+        );
+        if let Some(description) = &set.load_description {
+            println!("    Load description: {description}");
+        }
+        if let Some(notes) = &set.notes {
+            println!("    Set notes: {notes}");
+        }
+        if let (Some(white), Some(red)) = (set.white_flags, set.red_flags) {
+            println!(
+                "    Judging: {white} white, {red} red{}",
+                if red > white {
+                    " (failed judgment)"
+                } else {
+                    ""
+                }
+            );
+        }
+        for (index, portion) in set.portions.iter().enumerate() {
+            let exercise = store.show(portion.exercise_id)?;
+            let (label, value) = match exercise.measurement {
+                Measurement::Repetitions => (
+                    "attempted repetitions (minimum of sides for unilateral activity)",
+                    &portion.repetitions,
+                ),
+                Measurement::Duration => ("seconds", &portion.seconds),
+                Measurement::Distance => ("metres", &portion.metres),
+            };
+            println!(
+                "    Portion {} (ID {}), exercise {}: {} — {label}: {}",
+                index + 1,
+                portion.id.unwrap(),
+                exercise.id,
+                exercise.name,
+                value.as_ref().unwrap()
+            );
+            if let Some(notes) = &portion.notes {
+                println!("      Portion notes: {notes}");
+            }
+        }
+    }
+    Ok(())
+}
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let path = match cli.db {
         Some(path) => path,
@@ -231,6 +348,38 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut store = Store::open(&path)?;
     match cli.command {
+        Command::Workout { command } => match command {
+            WorkoutCommand::Start { date, start } => {
+                let workout = store.start_workout(date, start)?;
+                print_workout(&store, &workout, false)?;
+            }
+            WorkoutCommand::List { drafts, json } => {
+                let workouts = store.workouts(drafts)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&workouts)?);
+                } else if workouts.is_empty() {
+                    println!("No workouts.");
+                } else {
+                    for workout in workouts {
+                        print_workout(&store, &workout, false)?;
+                    }
+                }
+            }
+            WorkoutCommand::Show { id, json } => print_workout(&store, &store.workout(id)?, json)?,
+            WorkoutCommand::Update { id, file } => {
+                let document = serde_json::from_slice(&std::fs::read(file)?)?;
+                let workout = store.save_workout(id, document)?;
+                print_workout(&store, &workout, false)?;
+            }
+            WorkoutCommand::Finish { id, end } => {
+                let workout = store.finish_workout(id, end)?;
+                print_workout(&store, &workout, false)?;
+            }
+            WorkoutCommand::Discard { id } => {
+                store.discard_workout(id)?;
+                println!("Discarded workout {id}.");
+            }
+        },
         Command::Routine { command } => match command {
             RoutineCommand::Create { file } => {
                 let document = serde_json::from_slice(&std::fs::read(file)?)?;

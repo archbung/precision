@@ -186,3 +186,89 @@ migration unchanged. Stable IDs use monotonic SQLite identities, and every
 connection enforces foreign keys. CLI integration tests cover restart reads,
 replacement order/identity, rejected replacement rollback, decimal limits,
 complexes, omitted versus zero quantities, and deletion.
+
+## Standalone workouts
+
+Start a draft, export it, edit its actual activity, and resume by updating the
+same ID from any later CLI process:
+
+```sh
+precision workout start --date 2026-10-05 --start 2026-10-05T23:50:00+07:00
+precision workout list --drafts
+precision workout show 1 --json > workout.json
+precision workout update 1 --file workout.json
+precision workout finish 1 --end 2026-10-06T00:20:00+07:00
+precision workout list
+```
+
+`workout start` requires `--date YYYY-MM-DD`; `--start RFC3339` is optional.
+Start prints the durable workout ID and creates a clearly marked draft with no
+performed sets. `workout list [--json]` lists finished workouts in ID order;
+`--drafts` includes drafts as well. `workout show ID [--json]` inspects either
+state. `workout discard ID` permanently removes a draft and its activity.
+Finished workouts are read-only: update, finish again, and discard fail.
+`finish` requires at least one performed set and atomically saves the state and
+optional end timestamp; omission retains an end already supplied by update.
+
+An update replaces the entire session metadata and actual activity. Example
+(use an existing repetition exercise ID):
+
+```json
+{
+  "schema_version": 1,
+  "date": "2026-10-05",
+  "start": "2026-10-05T23:50:00+07:00",
+  "end": null,
+  "notes": "Late session",
+  "sets": [{
+    "type": "main",
+    "kilograms": null,
+    "load_description": "purple band",
+    "rpe": 9.5,
+    "white_flags": 1,
+    "red_flags": 2,
+    "notes": "Judgment is independent of physical completion",
+    "portions": [{
+      "exercise_id": 1,
+      "repetitions": 9,
+      "notes": "Ninth attempt unsuccessful; unilateral attempted counts 9/10"
+    }]
+  }]
+}
+```
+
+Exports additionally include `id`, `state`, and stable nested set/portion IDs.
+`state` may be omitted on update (defaults to `draft`); a supplied state must be
+`draft`. The top-level ID, if supplied, must match the destination. Retain IDs
+for existing entries; omit them for new entries. Array order controls sequence.
+Unknown, foreign, duplicate, or previously removed nested IDs fail. Drafts may
+contain zero sets, but each recorded set requires nonempty ordered portions.
+Each portion requires exactly one non-null primary measurement matching its
+exercise: `repetitions`, `seconds`, or `metres`. Zero is valid; missing/null
+primary activity is rejected. Repetitions count nonnegative integral attempts,
+including unsuccessful attempts; unilateral counts use the minimum across
+sides. Fractional nonnegative seconds/metres are allowed. Describe unsuccessful
+attempts and side counts in notes, without structured completion or side fields.
+
+Set types default to `main`, with `warmup` also accepted. Load is shared across
+all portions. Unknown kilograms are null/omitted, distinct from zero. Negative
+kilograms require every portion to use added-bodyweight load; mixed conventions
+are permitted otherwise. Actual RPE is optional, whole-set, 1–10 in half steps.
+White/red flags must both be null/omitted or nonnegative integers totaling
+three. A red majority is displayed as failed judgment, without inferring
+physical completion. Session, set, and portion notes retain their own context.
+The exact decimal precision documented above also applies to actual values.
+
+Dates and full offset timestamps retain their supplied spelling, dates, and
+zone offsets. The start timestamp's local date must match `date`. With both
+times present, the end instant cannot precede the start instant. Without a
+start time, the end's supplied local date cannot precede `date`. Cross-midnight
+end dates are supported. Missing times remain unknown; no time or rest is
+invented. Malformed dates/timestamps fail.
+
+Update rejects intention/source fields, rest, supersets/groups, and all unknown
+fields, even empty unsupported values. Routine-based starts and intention
+editing belong to later slices. Validation and replacement run within one
+transaction: any error leaves metadata, IDs, state, and performance unchanged.
+Migration version 3 adds workouts and independently owned ordered performed
+sets/portions with relational exercise references; existing data is preserved.
