@@ -418,3 +418,43 @@ transitions and groups have no inferred correspondence. Comparison does not
 identify skipped prescribed sets, declare target achievement, score order,
 or estimate equivalence or improvement. An unknown workout ID exits nonzero
 with an error on stderr.
+
+## Reviewed workout conversion
+
+```sh
+precision routine propose --from-workout 1 --file review.json
+# Edit review.json, including routine.name and future targets, then explicitly save:
+precision routine create --file review.json --reviewed-from-workout 1
+# Or replace the workout's current source routine:
+precision routine replace-source --from-workout 1 --file review.json --reviewed
+```
+
+Only finished workouts can be converted. Proposal writes a file and does not
+save or update a routine. The review envelope has `schema_version: 1`,
+`from_workout`, `source_routine_id`, `source_revision`, `review_guidance`, and
+`routine`. The nested routine uses the ordinary routine schema. Session notes
+become routine notes; actual set/portion order, types, exercise references,
+shared load, notes, and supersets are copied. Negative nested IDs are local
+review references, remapped to fresh destination identities when saved. Retain
+these IDs when editing copied entries; new entries omit IDs. Foreign IDs are
+rejected. Supersets reference set IDs within the review's routine.
+
+Recorded repetition values are **attempts**, including unsuccessful attempts;
+they are proposed for review as minimum future **successful repetitions**.
+Notes are copied verbatim and never parsed to infer success. Seconds, metres,
+and signed kilograms propose minimum targets. RPE means a maximum; rest means
+a minimum. Both default to null (no numeric instruction), with exactly N−1
+null rest transitions. Judging flags are omitted. Zero and null remain distinct.
+Review and adjust values, notes, composition, and name before saving.
+
+Both save paths validate the entire prescription and require the explicit
+review flag/source option. Ordinary routine CRUD remains independent. Keep
+provenance metadata intact: the originating workout and its original source ID
+are checked. A routine-free workout has null source ID/revision. A proposal
+made after source deletion retains the original ID and has null revision.
+New-routine creation remains available after source deletion or source edits.
+Replacement keeps the source routine's ID and compares its revision within the
+write transaction. Deleted or stale sources fail without partial changes;
+generate and review a fresh proposal before trying again. Every ordinary update
+and reviewed replacement advances the source revision. Workout intentions and
+performance stay unchanged; subsequent reuse reads the replaced current source.

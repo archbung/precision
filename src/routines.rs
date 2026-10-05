@@ -71,27 +71,7 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let original = id.map(|id| read(&tx, id)).transpose()?;
         validate(&tx, &mut routine, original.as_ref())?;
-        if let Some(id) = id {
-            tx.execute(
-                "UPDATE routines SET name=?1,notes=?2 WHERE id=?3",
-                params![routine.name, routine.notes, id],
-            )?;
-            tx.execute("DELETE FROM prescribed_sets WHERE routine_id=?1", [id])?;
-        } else {
-            tx.execute(
-                "INSERT INTO routines(name,notes) VALUES (?1,?2)",
-                params![routine.name, routine.notes],
-            )?;
-        }
-        routine.id = Some(id.unwrap_or_else(|| tx.last_insert_rowid()));
-        write_sets(&tx, routine.id.unwrap(), &mut routine.sets, false)?;
-        crate::organization::write(
-            &tx,
-            "prescribed",
-            routine.id.unwrap(),
-            routine.rest.as_deref().unwrap(),
-            &mut routine.supersets,
-        )?;
+        persist(&tx, id, &mut routine, None)?;
         tx.commit()?;
         Ok(routine)
     }
@@ -125,7 +105,7 @@ pub(crate) fn read(connection: &Connection, id: i64) -> Result<Routine> {
     (routine.rest, routine.supersets) = crate::organization::read(connection, "prescribed", id)?;
     Ok(routine)
 }
-fn validate(
+pub(crate) fn validate(
     connection: &Connection,
     routine: &mut Routine,
     original: Option<&Routine>,
@@ -304,4 +284,45 @@ pub(crate) fn read_sets(
             .collect::<rusqlite::Result<_>>()?;
     }
     Ok(sets)
+}
+
+pub(crate) fn persist(
+    tx: &Connection,
+    id: Option<i64>,
+    routine: &mut Routine,
+    local_ids: Option<&[Option<i64>]>,
+) -> Result<()> {
+    if let Some(id) = id {
+        tx.execute(
+            "UPDATE routines SET name=?1,notes=?2,revision=revision+1 WHERE id=?3",
+            params![routine.name, routine.notes, id],
+        )?;
+        tx.execute("DELETE FROM prescribed_sets WHERE routine_id=?1", [id])?;
+    } else {
+        tx.execute(
+            "INSERT INTO routines(name,notes) VALUES (?1,?2)",
+            params![routine.name, routine.notes],
+        )?;
+    }
+    routine.id = Some(id.unwrap_or_else(|| tx.last_insert_rowid()));
+    write_sets(tx, routine.id.unwrap(), &mut routine.sets, false)?;
+    if let Some(local_ids) = local_ids {
+        for group in &mut routine.supersets {
+            for member in &mut group.set_ids {
+                let position = local_ids
+                    .iter()
+                    .position(|s| *s == Some(*member))
+                    .ok_or("foreign superset member")?;
+                *member = routine.sets[position].id.unwrap();
+            }
+        }
+    }
+    crate::organization::write(
+        tx,
+        "prescribed",
+        routine.id.unwrap(),
+        routine.rest.as_deref().unwrap(),
+        &mut routine.supersets,
+    )?;
+    Ok(())
 }

@@ -1,5 +1,6 @@
 mod aggregate_values;
 mod comparison;
+mod conversion;
 mod exercise_types;
 mod exercises;
 mod organization;
@@ -47,9 +48,27 @@ enum Command {
     after_help = "Create/update use --file PATH with schema_version: 1, name, optional notes, and nonempty sets. Sets contain ordered portions referencing exercise_id. See README.md for JSON examples and decimal precision. Rest uses N-1 optional seconds; supersets reference owner-local set IDs. Reordering requires replacement rest."
 )]
 enum RoutineCommand {
+    /// Explicitly replace the current source after reviewing proposed targets.
+    ReplaceSource {
+        #[arg(long)]
+        from_workout: i64,
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long, required = true)]
+        reviewed: bool,
+    },
+    /// Write editable future targets for explicit review; never saves a routine.
+    Propose {
+        #[arg(long)]
+        from_workout: i64,
+        #[arg(long)]
+        file: PathBuf,
+    },
     Create {
         #[arg(long)]
         file: PathBuf,
+        #[arg(long)]
+        reviewed_from_workout: Option<i64>,
     },
     List {
         #[arg(long)]
@@ -499,9 +518,35 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Command::Routine { command } => match command {
-            RoutineCommand::Create { file } => {
-                let document = serde_json::from_slice(&std::fs::read(file)?)?;
-                let routine = store.save_routine(None, document)?;
+            RoutineCommand::Propose { from_workout, file } => {
+                let proposal = store.propose_routine(from_workout)?;
+                std::fs::write(&file, serde_json::to_vec_pretty(&proposal)?)?;
+                println!(
+                    "Review written to {}. {}",
+                    file.display(),
+                    proposal.review_guidance
+                );
+            }
+            RoutineCommand::ReplaceSource {
+                from_workout,
+                file,
+                reviewed: _,
+            } => {
+                let proposal = serde_json::from_slice(&std::fs::read(file)?)?;
+                let routine = store.save_reviewed_routine(from_workout, proposal, true)?;
+                println!("Replaced source routine {}.", routine.id.unwrap());
+                print_routine(&store, &routine, false)?;
+            }
+            RoutineCommand::Create {
+                file,
+                reviewed_from_workout,
+            } => {
+                let bytes = std::fs::read(file)?;
+                let routine = if let Some(id) = reviewed_from_workout {
+                    store.save_reviewed_routine(id, serde_json::from_slice(&bytes)?, false)?
+                } else {
+                    store.save_routine(None, serde_json::from_slice(&bytes)?)?
+                };
                 print_routine(&store, &routine, false)?;
             }
             RoutineCommand::Update { id, file } => {
