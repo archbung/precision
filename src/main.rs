@@ -1,5 +1,7 @@
+mod exercise_types;
 mod exercises;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use exercise_types::{LoadConvention, Measurement};
 use exercises::{Exercise, Store};
 use std::path::PathBuf;
 
@@ -73,16 +75,21 @@ struct Muscles {
     #[arg(long)]
     secondary_muscle: Vec<i64>,
 }
-#[derive(Clone, Copy, ValueEnum)]
-enum Measurement {
-    Repetitions,
-    Duration,
-    Distance,
+impl ValueEnum for Measurement {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[Self::Repetitions, Self::Duration, Self::Distance]
+    }
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        Some(clap::builder::PossibleValue::new(self.as_str()))
+    }
 }
-#[derive(Clone, Copy, ValueEnum)]
-enum LoadConvention {
-    External,
-    AddedBodyweight,
+impl ValueEnum for LoadConvention {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[Self::External, Self::AddedBodyweight]
+    }
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        Some(clap::builder::PossibleValue::new(self.as_str()))
+    }
 }
 fn print_exercise(
     store: &Store,
@@ -154,12 +161,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     schema_version: 1,
                     id: 0,
                     name,
-                    measurement: measurement.to_possible_value().unwrap().get_name().into(),
-                    load_convention: load_convention
-                        .to_possible_value()
-                        .unwrap()
-                        .get_name()
-                        .into(),
+                    measurement,
+                    load_convention,
                     equipment,
                     primary_muscle: muscles.primary_muscle,
                     secondary_muscles: muscles.secondary_muscle,

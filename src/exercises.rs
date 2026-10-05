@@ -1,3 +1,4 @@
+use crate::exercise_types::{LoadConvention, Measurement};
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 use serde::Serialize;
 use std::{path::Path, time::Duration};
@@ -9,8 +10,8 @@ pub struct Exercise {
     pub schema_version: u32,
     pub id: i64,
     pub name: String,
-    pub measurement: String,
-    pub load_convention: String,
+    pub measurement: Measurement,
+    pub load_convention: LoadConvention,
     pub equipment: Vec<i64>,
     pub primary_muscle: Option<i64>,
     pub secondary_muscles: Vec<i64>,
@@ -105,7 +106,7 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         validate(&tx, &mut exercise)?;
-        tx.execute("INSERT INTO exercises(name,name_key,measurement,load_convention,primary_muscle) VALUES (?1,?2,?3,?4,?5)", params![exercise.name, exercise.name.case_fold().collect::<String>(), exercise.measurement, exercise.load_convention, exercise.primary_muscle])?;
+        tx.execute("INSERT INTO exercises(name,name_key,measurement,load_convention,primary_muscle) VALUES (?1,?2,?3,?4,?5)", params![exercise.name, exercise.name.case_fold().collect::<String>(), exercise.measurement.as_str(), exercise.load_convention.as_str(), exercise.primary_muscle])?;
         exercise.id = tx.last_insert_rowid();
         for id in &exercise.equipment {
             tx.execute(
@@ -168,8 +169,8 @@ fn read(connection: &Connection, id: i64) -> Result<Exercise> {
                 schema_version: 1,
                 id: row.get(0)?,
                 name: row.get(1)?,
-                measurement: row.get(2)?,
-                load_convention: row.get(3)?,
+                measurement: read_domain_value(row, 2)?,
+                load_convention: read_domain_value(row, 3)?,
                 primary_muscle: row.get(4)?,
                 equipment: vec![],
                 secondary_muscles: vec![],
@@ -261,4 +262,21 @@ fn save_secondary(tx: &Transaction<'_>, exercise: &Exercise) -> Result<()> {
         )?;
     }
     Ok(())
+}
+
+fn read_domain_value<T: std::str::FromStr<Err = String>>(
+    row: &rusqlite::Row<'_>,
+    index: usize,
+) -> rusqlite::Result<T> {
+    let value: String = row.get(index)?;
+    value.parse().map_err(|message| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                message,
+            )),
+        )
+    })
 }
