@@ -362,3 +362,36 @@ tables for routines, intentions, and actual activity. Owner-scoped foreign keys
 prevent cross-owner memberships. Existing sequences receive null rest
 transitions and no groups. Validation and persistence run in the aggregate's
 transaction; invalid replacement leaves all original data intact.
+
+### Compare intention and performance
+
+Run `precision --db PATH workout compare ID` for a draft or finished workout.
+The command is read-only and uses the workout's preserved intention, including
+its notes and original routine context; later routine edits do not change it.
+
+Groups are keyed by exercise ID and warmup/main set type, in first intention
+appearance order followed by actual-only groups. Each group has independent
+prescribed and actual columns, ordered by original set and portion position.
+**Visual rows do not pair sets.** Five prescribed sets and four actual sets
+remain separate lists; a group missing on one side explicitly says so.
+
+Entries show stable IDs and positions, ordered complex composition, shared
+kilograms/load description, whole-set RPE and notes, relevant portion notes,
+judging flags, and independent superset membership. Counts distinguish unique
+sets from portions; repeated observations for multiple portions still belong
+to one shared set. Each exercise's load convention is shown.
+
+Prescribed repetitions are **minimum successful repetitions** (on each side
+for unilateral activity); actual repetitions are **attempts**, including
+unsuccessful attempts. Prescribed duration, distance, kilograms and rest are
+minima; prescribed RPE is a maximum. `unspecified` means no numeric target or
+an unknown actual observation, while `0` remains explicit. Notes are displayed
+without interpreting them as successful repetitions. Majority-red judging
+flags mean failed judgment independently of physical completion.
+
+Separate full intended and actual sequence/rest sections preserve all portions,
+notes, transitions, and noncontiguous superset membership. These sequences,
+transitions and groups have no inferred correspondence. Comparison does not
+identify skipped prescribed sets, declare target achievement, score order,
+or estimate equivalence or improvement. An unknown workout ID exits nonzero
+with an error on stderr.

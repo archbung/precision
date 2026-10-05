@@ -1,4 +1,5 @@
 mod aggregate_values;
+mod comparison;
 mod exercise_types;
 mod exercises;
 mod organization;
@@ -74,6 +75,10 @@ enum RoutineCommand {
     after_help = "Update replaces metadata and actual sets using --file PATH; show --json exports schema_version: 1 with intention and provenance. Remove intention/source fields for actual updates; use intention update for prescribed activity. Completed workouts are read-only. See README.md for schema. Intended and actual rest/supersets are independent. Rest uses N-1 optional seconds; supersets reference owner-local set IDs. Reordering requires replacement rest."
 )]
 enum WorkoutCommand {
+    /// Compare independent prescribed and actual lists by exercise and set type.
+    Compare {
+        id: i64,
+    },
     Intention {
         #[command(subcommand)]
         command: IntentionCommand,
@@ -416,6 +421,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let mut store = Store::open(&path)?;
     match cli.command {
         Command::Workout { command } => match command {
+            WorkoutCommand::Compare { id } => comparison::print(&store, &store.workout(id)?)?,
             WorkoutCommand::Intention {
                 command: IntentionCommand::Update { id, file },
             } => {
