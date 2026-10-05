@@ -106,6 +106,7 @@ fn replacement_preserves_retained_ids_assigns_fresh_ids_and_deletes_atomically()
         .as_array_mut()
         .unwrap()
         .insert(0, json!({"kilograms":-20,"portions":[{"exercise_id":1}]}));
+    replacement["rest"] = json!([null, null]);
     let path = write(&db, &replacement);
     ok(&db, &["routine", "update", "1", "--file", &path]);
     let after = show(&db, "1");
@@ -125,6 +126,7 @@ fn replacement_preserves_retained_ids_assigns_fresh_ids_and_deletes_atomically()
     // Removing children never allows their exported identities to be reused.
     let mut reduced = after.clone();
     reduced["sets"] = json!([after["sets"][2].clone()]);
+    reduced["rest"] = json!([]);
     let path = write(&db, &reduced);
     ok(&db, &["routine", "update", "1", "--file", &path]);
     let path = write(&db, &after);
@@ -245,8 +247,6 @@ fn invalid_replacements_leave_the_complete_original_unchanged() {
         assert_eq!(show(&db, "1"), before, "{pointer}");
     }
     for (pointer, field, value) in [
-        ("", "rest", json!([null])),
-        ("", "supersets", json!([])),
         ("", "typo", json!(true)),
         ("/sets/0", "white_flags", json!(3)),
         ("/sets/0", "rest", json!(0)),

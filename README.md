@@ -161,9 +161,8 @@ Validation and replacement occur in one transaction, so any failure leaves the
 original intact. Deletion removes only the routine and its prescribed children;
 it introduces no workout cascade.
 
-All JSON objects reject unknown fields. Rest, supersets/grouping, judging flags,
-structured failure, ranges, and programming data are not supported in this
-slice and are rejected, including empty rest/group fields. Malformed JSON,
+All JSON objects reject unknown fields. Judging flags in prescriptions,
+structured failure, ranges, and programming data are rejected. Malformed JSON,
 unsupported document versions, wrong field types, and invalid references fail
 with a nonzero exit status and stderr explanation.
 
@@ -266,8 +265,7 @@ start time, the end's supplied local date cannot precede `date`. Cross-midnight
 end dates are supported. Missing times remain unknown; no time or rest is
 invented. Malformed dates/timestamps fail.
 
-Update rejects intention/source fields, rest, supersets/groups, and all unknown
-fields, even empty unsupported values. Intention and provenance are read-only fields in workout exports; remove them
+Update rejects intention/source fields and all unknown fields. Intention and provenance are read-only fields in workout exports; remove them
 before submitting an actual update, or use `show --json --actual-only`
 to export an editable actual update document directly. Validation and replacement run within one
 transaction: any error leaves metadata, IDs, state, and performance unchanged.
@@ -282,7 +280,7 @@ Routine-free starts have an empty intention. Each copy owns fresh set/portion
 identities; order, types, load setup, optional targets, and all notes are preserved.
 Routine edits, intention edits, and actual updates affect only their own aggregate.
 Actual measurements never fill unspecified targets or create set correspondence.
-Rest and supersets remain unsupported in this slice, as in routine/actual commands.
+Rest transitions and supersets copy with fresh intention-owned identities.
 
 `workout show ID --json` and `workout list --json` include `intention` and source
 provenance alongside the actual update fields. To edit prescriptions, extract the
@@ -293,8 +291,8 @@ jq .intention > intention.json`) and submit:
 precision workout intention update 1 --file intention.json
 ```
 
-An intention document contains only `schema_version: 1`, optional `notes`, and
-`sets` using the prescribed set/portion schema above; it has no routine name or
+An intention document contains `schema_version: 1`, optional `notes`, `rest`,
+`supersets`, and `sets` using the prescribed set/portion schema above; it has no routine name or
 aggregate ID. Empty intention is valid:
 
 ```json
@@ -318,3 +316,49 @@ notes, and actual activity in their separate contexts.
 Migration version 4 adds independent workout-owned prescription tables and source
 metadata. Existing version 3 workouts receive empty intentions and no provenance;
 existing routines, exercises, and performances remain intact.
+
+
+## Rest transitions and supersets
+
+Routine, intention, and actual documents each accept `rest` and `supersets`.
+Exports always include both arrays. For N sets, `rest` contains exactly
+`max(N-1, 0)` values describing successive sequence transitions in seconds:
+
+```json
+"rest": [0, null, 1.25],
+"supersets": [{"id": 7, "set_ids": [11, 13, 14]}]
+```
+
+This example describes four sets with a noncontiguous group of three. Supply
+actual exported IDs from the same aggregate. Rest has no leading/trailing
+value. Nonnegative fractional seconds use the exact decimal precision above.
+Prescribed rest is a minimum; zero imposes no minimum and null gives no numeric
+instruction. Actual rest is an observation; zero means no rest and null means
+unknown. Timestamps and equipment-change time never determine rest.
+Omitting `rest` initializes all transitions to null; it clears prior durations
+on replacement. Explicit `rest: null` is invalid. Reordering retained sets
+requires an explicit complete replacement array, even if all values are null;
+old transitions are never remapped. When adding/removing sets, adjust any
+supplied array to the new count. Zero/one-set sequences use `[]`.
+
+Each superset has an optional stable `id` and a `set_ids` array of at least two
+distinct owner-local set IDs. Each set belongs to at most one group; foreign
+IDs, duplicate membership, overlaps, and nesting are rejected. Noncontiguous
+sets, unequal exercise counts, repeated exercises, and multi-exercise sets are
+allowed. Membership does not change sequence or imply execution order. Groups
+have no intended/actual correspondence. Retain exported group IDs on updates;
+new groups omit `id`. Omitted `supersets` clears grouping.
+
+The CLI generates IDs. To group newly created sets, first save the sets, export
+the aggregate, then add `supersets` referencing its generated set IDs and update.
+This also applies when adding new sets to an existing aggregate. Routine copies
+remap every group member to the new intention's set identity. Intention and
+actual edits affect only their own organization. Routine edits/deletion preserve
+workout organization. Human reads label prescribed minima and actual observations
+separately and show group IDs and member set IDs.
+
+Migration version 5 adds independent relational rest, superset, and membership
+tables for routines, intentions, and actual activity. Owner-scoped foreign keys
+prevent cross-owner memberships. Existing sequences receive null rest
+transitions and no groups. Validation and persistence run in the aggregate's
+transaction; invalid replacement leaves all original data intact.

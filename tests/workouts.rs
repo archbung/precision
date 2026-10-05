@@ -197,8 +197,6 @@ fn invalid_updates_and_finishes_roll_back_every_field() {
         assert_eq!(show(&db, "1"), before, "{pointer}");
     }
     for (pointer, field, value) in [
-        ("", "rest", json!([])),
-        ("", "supersets", json!([])),
         ("", "intention", json!({})),
         ("", "source_routine_id", json!(1)),
         ("/sets/0", "rest", json!(0)),
@@ -263,6 +261,7 @@ fn retained_identities_follow_order_and_removed_or_foreign_ids_cannot_return() {
         .as_array_mut()
         .unwrap()
         .push(json!({"portions":[{"exercise_id":1,"repetitions":0}]}));
+    edited["rest"] = json!([null, null]);
     let path = write(&db, &edited);
     ok(&db, &["workout", "update", "1", "--file", &path]);
     let after = show(&db, "1");
@@ -282,6 +281,7 @@ fn retained_identities_follow_order_and_removed_or_foreign_ids_cannot_return() {
     }
     let mut reduced = after.clone();
     reduced["sets"] = json!([after["sets"][0].clone()]);
+    reduced["rest"] = json!([]);
     let path = write(&db, &reduced);
     ok(&db, &["workout", "update", "1", "--file", &path]);
     let path = write(&db, &after);

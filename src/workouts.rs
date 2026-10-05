@@ -9,6 +9,10 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Workout {
+    #[serde(default, deserialize_with = "crate::organization::rest_array")]
+    pub rest: Option<Vec<crate::organization::Rest>>,
+    #[serde(default)]
+    pub supersets: Vec<crate::organization::Superset>,
     #[serde(skip)]
     pub intention: Intention,
     #[serde(skip)]
@@ -30,6 +34,10 @@ pub struct Workout {
 #[derive(Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Intention {
+    #[serde(default, deserialize_with = "crate::organization::rest_array")]
+    pub rest: Option<Vec<crate::organization::Rest>>,
+    #[serde(default)]
+    pub supersets: Vec<crate::organization::Superset>,
     pub schema_version: u32,
     pub notes: Option<String>,
     pub sets: Vec<crate::routines::PrescribedSet>,
@@ -102,6 +110,7 @@ impl Store {
         let id = tx.last_insert_rowid();
         if let Some(mut routine) = routine {
             tx.execute("UPDATE workouts SET source_routine_id=?1,original_source_id=?1,original_source_name=?2,intention_notes=?3 WHERE id=?4", params![routine.id, routine.name, routine.notes, id])?;
+            let old_ids: Vec<_> = routine.sets.iter().map(|s| s.id.unwrap()).collect();
             for set in &mut routine.sets {
                 set.id = None;
                 for portion in &mut set.portions {
@@ -110,6 +119,23 @@ impl Store {
             }
             crate::routines::validate_sets(&tx, &routine.sets, &[])?;
             crate::routines::write_sets(&tx, id, &mut routine.sets, true)?;
+            for group in &mut routine.supersets {
+                group.id = None;
+                for member in &mut group.set_ids {
+                    let position = old_ids
+                        .iter()
+                        .position(|id| id == member)
+                        .ok_or("invalid source superset")?;
+                    *member = routine.sets[position].id.unwrap();
+                }
+            }
+            crate::organization::write(
+                &tx,
+                "intention",
+                id,
+                routine.rest.as_deref().unwrap(),
+                &mut routine.supersets,
+            )?;
         }
         let workout = read(&tx, id)?;
         tx.commit()?;
@@ -142,6 +168,13 @@ impl Store {
                 portion.id = Some(portion.id.unwrap_or_else(|| tx.last_insert_rowid()));
             }
         }
+        crate::organization::write(
+            &tx,
+            "performed",
+            id,
+            workout.rest.as_deref().unwrap(),
+            &mut workout.supersets,
+        )?;
         let workout = read(&tx, id)?;
         tx.commit()?;
         Ok(workout)
@@ -157,12 +190,31 @@ impl Store {
             return Err("unsupported intention schema_version; expected 1".into());
         }
         crate::routines::validate_sets(&tx, &intention.sets, &original.intention.sets)?;
+        crate::organization::validate(
+            &mut intention.rest,
+            &intention.supersets,
+            &intention.sets.iter().map(|s| s.id).collect::<Vec<_>>(),
+            &original
+                .intention
+                .sets
+                .iter()
+                .map(|s| s.id)
+                .collect::<Vec<_>>(),
+            &original.intention.supersets,
+        )?;
         tx.execute(
             "UPDATE workouts SET intention_notes=?1 WHERE id=?2",
             params![intention.notes, id],
         )?;
         tx.execute("DELETE FROM intention_sets WHERE workout_id=?1", [id])?;
         crate::routines::write_sets(&tx, id, &mut intention.sets, true)?;
+        crate::organization::write(
+            &tx,
+            "intention",
+            id,
+            intention.rest.as_deref().unwrap(),
+            &mut intention.supersets,
+        )?;
         let workout = read(&tx, id)?;
         tx.commit()?;
         Ok(workout)
@@ -233,7 +285,7 @@ fn read(connection: &Connection, id: i64) -> Result<Workout> {
             [id],
             |row| {
                 Ok(Workout {
-                    intention: Intention { schema_version: 1, notes: row.get(8)?, sets: vec![] },
+                    intention: Intention { schema_version: 1, notes: row.get(8)?, rest: None, supersets: vec![], sets: vec![] },
                     source_routine_id: row.get(5)?,
                     original_source_id: row.get(6)?,
                     original_source_name: row.get(7)?,
@@ -244,7 +296,7 @@ fn read(connection: &Connection, id: i64) -> Result<Workout> {
                     start: row.get(2)?,
                     end: row.get(3)?,
                     notes: row.get(4)?,
-                    sets: vec![],
+                    rest: None, supersets: vec![], sets: vec![],
                 })
             },
         )
@@ -285,6 +337,9 @@ fn read(connection: &Connection, id: i64) -> Result<Workout> {
             .collect::<rusqlite::Result<_>>()?;
     }
     workout.intention.sets = crate::routines::read_sets(connection, id, true)?;
+    (workout.rest, workout.supersets) = crate::organization::read(connection, "performed", id)?;
+    (workout.intention.rest, workout.intention.supersets) =
+        crate::organization::read(connection, "intention", id)?;
     Ok(workout)
 }
 fn validate(
@@ -299,6 +354,15 @@ fn validate(
         return Err("workout ID must match the update destination; omit IDs on create".into());
     }
     require_draft(workout)?;
+    crate::organization::validate(
+        &mut workout.rest,
+        &workout.supersets,
+        &workout.sets.iter().map(|s| s.id).collect::<Vec<_>>(),
+        &original
+            .map(|r| r.sets.iter().map(|s| s.id).collect::<Vec<_>>())
+            .unwrap_or_default(),
+        original.map(|r| r.supersets.as_slice()).unwrap_or(&[]),
+    )?;
     validate_times(&workout.date, &workout.start, &workout.end)?;
     let old_sets: HashSet<i64> = original
         .into_iter()

@@ -12,6 +12,10 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Routine {
+    #[serde(default, deserialize_with = "crate::organization::rest_array")]
+    pub rest: Option<Vec<crate::organization::Rest>>,
+    #[serde(default)]
+    pub supersets: Vec<crate::organization::Superset>,
     pub schema_version: u32,
     pub id: Option<i64>,
     pub name: String,
@@ -81,6 +85,13 @@ impl Store {
         }
         routine.id = Some(id.unwrap_or_else(|| tx.last_insert_rowid()));
         write_sets(&tx, routine.id.unwrap(), &mut routine.sets, false)?;
+        crate::organization::write(
+            &tx,
+            "prescribed",
+            routine.id.unwrap(),
+            routine.rest.as_deref().unwrap(),
+            &mut routine.supersets,
+        )?;
         tx.commit()?;
         Ok(routine)
     }
@@ -103,12 +114,15 @@ pub(crate) fn read(connection: &Connection, id: i64) -> Result<Routine> {
                 id: Some(id),
                 name: row.get(0)?,
                 notes: row.get(1)?,
+                rest: None,
+                supersets: vec![],
                 sets: vec![],
             })
         })
         .optional()?
         .ok_or_else(|| format!("unknown routine ID {id}; use routine list"))?;
     routine.sets = read_sets(connection, id, false)?;
+    (routine.rest, routine.supersets) = crate::organization::read(connection, "prescribed", id)?;
     Ok(routine)
 }
 fn validate(
@@ -129,6 +143,15 @@ fn validate(
     if routine.sets.is_empty() {
         return Err("routine requires at least one prescribed set".into());
     }
+    crate::organization::validate(
+        &mut routine.rest,
+        &routine.supersets,
+        &routine.sets.iter().map(|s| s.id).collect::<Vec<_>>(),
+        &original
+            .map(|r| r.sets.iter().map(|s| s.id).collect::<Vec<_>>())
+            .unwrap_or_default(),
+        original.map(|r| r.supersets.as_slice()).unwrap_or(&[]),
+    )?;
     validate_sets(
         connection,
         &routine.sets,

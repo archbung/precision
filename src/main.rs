@@ -1,6 +1,7 @@
 mod aggregate_values;
 mod exercise_types;
 mod exercises;
+mod organization;
 mod routines;
 mod workouts;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -42,7 +43,7 @@ enum Command {
 #[derive(Subcommand)]
 #[command(
     about = "Reusable ordered prescriptions",
-    after_help = "Create/update use --file PATH with schema_version: 1, name, optional notes, and nonempty sets. Sets contain ordered portions referencing exercise_id. See README.md for JSON examples and decimal precision. Rest and supersets are not yet supported."
+    after_help = "Create/update use --file PATH with schema_version: 1, name, optional notes, and nonempty sets. Sets contain ordered portions referencing exercise_id. See README.md for JSON examples and decimal precision. Rest uses N-1 optional seconds; supersets reference owner-local set IDs. Reordering requires replacement rest."
 )]
 enum RoutineCommand {
     Create {
@@ -70,7 +71,7 @@ enum RoutineCommand {
 #[derive(Subcommand)]
 #[command(
     about = "Resumable workouts with independent intention",
-    after_help = "Update replaces metadata and actual sets using --file PATH; show --json exports schema_version: 1 with intention and provenance. Remove intention/source fields for actual updates; use intention update for prescribed activity. Completed workouts are read-only. See README.md for schema. Rest and groups are not yet supported."
+    after_help = "Update replaces metadata and actual sets using --file PATH; show --json exports schema_version: 1 with intention and provenance. Remove intention/source fields for actual updates; use intention update for prescribed activity. Completed workouts are read-only. See README.md for schema. Intended and actual rest/supersets are independent. Rest uses N-1 optional seconds; supersets reference owner-local set IDs. Reordering requires replacement rest."
 )]
 enum WorkoutCommand {
     Intention {
@@ -241,6 +242,7 @@ fn print_routine(
             &routine.sets,
             "Routine notes",
         )?;
+        organization::print(&routine.rest, &routine.supersets, true);
     }
     Ok(())
 }
@@ -346,7 +348,9 @@ fn print_workout(
         &workout.intention.sets,
         "Intention notes",
     )?;
+    organization::print(&workout.intention.rest, &workout.intention.supersets, true);
     println!("  Actual activity:");
+    organization::print(&workout.rest, &workout.supersets, false);
     for (index, set) in workout.sets.iter().enumerate() {
         println!(
             "  Set {} (ID {}, {}): kilograms {}, RPE {}",

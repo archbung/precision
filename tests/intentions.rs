@@ -185,6 +185,7 @@ fn intention_validation_and_owned_identities_are_atomic() {
     assert_eq!(show(&db, "1")["intention"], reordered);
     let mut reduced = reordered.clone();
     reduced["sets"] = json!([reordered["sets"][0].clone()]);
+    reduced["rest"] = json!([]);
     let path = write(&db, &reduced);
     ok(
         &db,
