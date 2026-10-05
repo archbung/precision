@@ -69,13 +69,19 @@ enum RoutineCommand {
 }
 #[derive(Subcommand)]
 #[command(
-    about = "Standalone resumable workout drafts",
-    after_help = "Update replaces metadata and actual sets using --file PATH; show --json exports an editable schema_version: 1 document. Completed workouts are read-only. See README.md for schema. Rest and groups are not yet supported."
+    about = "Resumable workouts with independent intention",
+    after_help = "Update replaces metadata and actual sets using --file PATH; show --json exports schema_version: 1 with intention and provenance. Remove intention/source fields for actual updates; use intention update for prescribed activity. Completed workouts are read-only. See README.md for schema. Rest and groups are not yet supported."
 )]
 enum WorkoutCommand {
+    Intention {
+        #[command(subcommand)]
+        command: IntentionCommand,
+    },
     Start {
         #[arg(long)]
         date: String,
+        #[arg(long)]
+        routine: Option<i64>,
         #[arg(long)]
         start: Option<String>,
     },
@@ -89,6 +95,12 @@ enum WorkoutCommand {
         id: i64,
         #[arg(long)]
         json: bool,
+        #[arg(
+            long,
+            requires = "json",
+            help = "Export only the editable actual update document"
+        )]
+        actual_only: bool,
     },
     Update {
         id: i64,
@@ -102,6 +114,14 @@ enum WorkoutCommand {
     },
     Discard {
         id: i64,
+    },
+}
+#[derive(Subcommand)]
+enum IntentionCommand {
+    Update {
+        id: i64,
+        #[arg(long)]
+        file: PathBuf,
     },
 }
 #[derive(Clone, Copy, ValueEnum)]
@@ -215,54 +235,76 @@ fn print_routine(
         println!("{}", serde_json::to_string_pretty(routine)?);
     } else {
         println!("{}: {}", routine.id.unwrap(), routine.name);
-        if let Some(notes) = &routine.notes {
-            println!("  Routine notes: {notes}");
+        print_prescriptions(
+            store,
+            routine.notes.as_deref(),
+            &routine.sets,
+            "Routine notes",
+        )?;
+    }
+    Ok(())
+}
+fn print_prescriptions(
+    store: &Store,
+    notes: Option<&str>,
+    sets: &[routines::PrescribedSet],
+    notes_label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(notes) = notes {
+        println!("  {notes_label}: {notes}");
+    }
+    let quantity = |value: &Option<serde_json::Number>| {
+        value
+            .as_ref()
+            .map_or("unspecified".into(), ToString::to_string)
+    };
+    for (position, set) in sets.iter().enumerate() {
+        println!(
+            "  Set {} (ID {}, {}): minimum kilograms {}, maximum RPE {}",
+            position + 1,
+            set.id.unwrap(),
+            set.kind,
+            quantity(&set.kilograms),
+            quantity(&set.rpe)
+        );
+        if let Some(description) = &set.load_description {
+            println!("    Load description: {description}");
         }
-        let quantity = |value: &Option<serde_json::Number>| {
-            value
-                .as_ref()
-                .map_or("unspecified".into(), ToString::to_string)
-        };
-        for (position, set) in routine.sets.iter().enumerate() {
+        if let Some(notes) = &set.notes {
+            println!("    Set notes: {notes}");
+        }
+        for (position, portion) in set.portions.iter().enumerate() {
+            let exercise = store.show(portion.exercise_id)?;
+            let (label, target) = match exercise.measurement {
+                Measurement::Repetitions => (
+                    "minimum successful repetitions (each side for unilateral activity)",
+                    &portion.repetitions,
+                ),
+                Measurement::Duration => ("minimum seconds", &portion.seconds),
+                Measurement::Distance => ("minimum metres", &portion.metres),
+            };
             println!(
-                "  Set {} (ID {}, {}): minimum kilograms {}, maximum RPE {}",
+                "    Portion {} (ID {}), exercise {}: {} — {label}: {}",
                 position + 1,
-                set.id.unwrap(),
-                set.kind,
-                quantity(&set.kilograms),
-                quantity(&set.rpe)
+                portion.id.unwrap(),
+                exercise.id,
+                exercise.name,
+                quantity(target)
             );
-            if let Some(description) = &set.load_description {
-                println!("    Load description: {description}");
-            }
-            if let Some(notes) = &set.notes {
-                println!("    Set notes: {notes}");
-            }
-            for (position, portion) in set.portions.iter().enumerate() {
-                let exercise = store.show(portion.exercise_id)?;
-                let (label, target) = match exercise.measurement {
-                    Measurement::Repetitions => (
-                        "minimum successful repetitions (each side for unilateral activity)",
-                        &portion.repetitions,
-                    ),
-                    Measurement::Duration => ("minimum seconds", &portion.seconds),
-                    Measurement::Distance => ("minimum metres", &portion.metres),
-                };
-                println!(
-                    "    Portion {} (ID {}), exercise {}: {} — {label}: {}",
-                    position + 1,
-                    portion.id.unwrap(),
-                    exercise.id,
-                    exercise.name,
-                    quantity(target)
-                );
-                if let Some(notes) = &portion.notes {
-                    println!("      Portion notes: {notes}");
-                }
+            if let Some(notes) = &portion.notes {
+                println!("      Portion notes: {notes}");
             }
         }
     }
     Ok(())
+}
+fn workout_export(workout: &workouts::Workout) -> Result<serde_json::Value, serde_json::Error> {
+    let mut document = serde_json::to_value(workout)?;
+    document["intention"] = serde_json::to_value(&workout.intention)?;
+    document["source_routine_id"] = serde_json::to_value(workout.source_routine_id)?;
+    document["original_source_id"] = serde_json::to_value(workout.original_source_id)?;
+    document["original_source_name"] = serde_json::to_value(&workout.original_source_name)?;
+    Ok(document)
 }
 fn print_workout(
     store: &Store,
@@ -270,7 +312,10 @@ fn print_workout(
     json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if json {
-        println!("{}", serde_json::to_string_pretty(workout)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&workout_export(workout)?)?
+        );
         return Ok(());
     }
     println!(
@@ -284,6 +329,24 @@ fn print_workout(
     if let Some(notes) = &workout.notes {
         println!("  Session notes: {notes}");
     }
+    println!(
+        "  Original source: {} (ID {}); current source ID: {}",
+        workout.original_source_name.as_deref().unwrap_or("none"),
+        workout
+            .original_source_id
+            .map_or("none".into(), |id| id.to_string()),
+        workout
+            .source_routine_id
+            .map_or("none".into(), |id| id.to_string())
+    );
+    println!("  Preserved intention:");
+    print_prescriptions(
+        store,
+        workout.intention.notes.as_deref(),
+        &workout.intention.sets,
+        "Intention notes",
+    )?;
+    println!("  Actual activity:");
     for (index, set) in workout.sets.iter().enumerate() {
         println!(
             "  Set {} (ID {}, {}): kilograms {}, RPE {}",
@@ -349,14 +412,33 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let mut store = Store::open(&path)?;
     match cli.command {
         Command::Workout { command } => match command {
-            WorkoutCommand::Start { date, start } => {
-                let workout = store.start_workout(date, start)?;
+            WorkoutCommand::Intention {
+                command: IntentionCommand::Update { id, file },
+            } => {
+                let intention = serde_json::from_reader(std::fs::File::open(file)?)?;
+                let workout = store.save_intention(id, intention)?;
+                print_workout(&store, &workout, false)?;
+            }
+            WorkoutCommand::Start {
+                date,
+                start,
+                routine,
+            } => {
+                let workout = store.start_workout(date, start, routine)?;
                 print_workout(&store, &workout, false)?;
             }
             WorkoutCommand::List { drafts, json } => {
                 let workouts = store.workouts(drafts)?;
                 if json {
-                    println!("{}", serde_json::to_string_pretty(&workouts)?);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(
+                            &workouts
+                                .iter()
+                                .map(workout_export)
+                                .collect::<Result<Vec<_>, _>>()?
+                        )?
+                    );
                 } else if workouts.is_empty() {
                     println!("No workouts.");
                 } else {
@@ -365,7 +447,18 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            WorkoutCommand::Show { id, json } => print_workout(&store, &store.workout(id)?, json)?,
+            WorkoutCommand::Show {
+                id,
+                json,
+                actual_only,
+            } => {
+                let workout = store.workout(id)?;
+                if actual_only {
+                    println!("{}", serde_json::to_string_pretty(&workout)?);
+                } else {
+                    print_workout(&store, &workout, json)?;
+                }
+            }
             WorkoutCommand::Update { id, file } => {
                 let document = serde_json::from_slice(&std::fs::read(file)?)?;
                 let workout = store.save_workout(id, document)?;

@@ -195,7 +195,7 @@ same ID from any later CLI process:
 ```sh
 precision workout start --date 2026-10-05 --start 2026-10-05T23:50:00+07:00
 precision workout list --drafts
-precision workout show 1 --json > workout.json
+precision workout show 1 --json --actual-only > workout.json
 precision workout update 1 --file workout.json
 precision workout finish 1 --end 2026-10-06T00:20:00+07:00
 precision workout list
@@ -267,8 +267,54 @@ end dates are supported. Missing times remain unknown; no time or rest is
 invented. Malformed dates/timestamps fail.
 
 Update rejects intention/source fields, rest, supersets/groups, and all unknown
-fields, even empty unsupported values. Routine-based starts and intention
-editing belong to later slices. Validation and replacement run within one
+fields, even empty unsupported values. Intention and provenance are read-only fields in workout exports; remove them
+before submitting an actual update, or use `show --json --actual-only`
+to export an editable actual update document directly. Validation and replacement run within one
 transaction: any error leaves metadata, IDs, state, and performance unchanged.
 Migration version 3 adds workouts and independently owned ordered performed
 sets/portions with relational exercise references; existing data is preserved.
+
+## Preserved workout intention
+
+`workout start --date YYYY-MM-DD --routine ID` copies the current routine's
+complete supported prescriptions and notes into the new draft in one transaction.
+Routine-free starts have an empty intention. Each copy owns fresh set/portion
+identities; order, types, load setup, optional targets, and all notes are preserved.
+Routine edits, intention edits, and actual updates affect only their own aggregate.
+Actual measurements never fill unspecified targets or create set correspondence.
+Rest and supersets remain unsupported in this slice, as in routine/actual commands.
+
+`workout show ID --json` and `workout list --json` include `intention` and source
+provenance alongside the actual update fields. To edit prescriptions, extract the
+`intention` object into a file (for example, `precision workout show 1 --json |
+jq .intention > intention.json`) and submit:
+
+```sh
+precision workout intention update 1 --file intention.json
+```
+
+An intention document contains only `schema_version: 1`, optional `notes`, and
+`sets` using the prescribed set/portion schema above; it has no routine name or
+aggregate ID. Empty intention is valid:
+
+```json
+{"schema_version": 1, "notes": "Spontaneous session", "sets": []}
+```
+
+Retain exported intention set/portion IDs for existing entries; omit IDs for new
+entries. Foreign, duplicate, or removed IDs fail, and prescriptions use the same
+validation and exact decimals as routines without requiring primary targets.
+Replacement is atomic and updates only intention, including its own notes.
+Finished workouts retain their intention and reject intention updates.
+
+`source_routine_id` is the live, nullable source reference. `original_source_id`
+and `original_source_name` preserve the original provenance independently of
+source renames/deletion. Deleting the routine clears only the live reference and
+removes the routine's children; associated drafts, finished workouts, intention,
+and actual activity survive. Creating a routine with the same name never restores
+the link. Human workout output shows provenance, prescribed activity, intention
+notes, and actual activity in their separate contexts.
+
+Migration version 4 adds independent workout-owned prescription tables and source
+metadata. Existing version 3 workouts receive empty intentions and no provenance;
+existing routines, exercises, and performances remain intact.

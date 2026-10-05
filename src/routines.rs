@@ -80,20 +80,7 @@ impl Store {
             )?;
         }
         routine.id = Some(id.unwrap_or_else(|| tx.last_insert_rowid()));
-        for (position, set) in routine.sets.iter_mut().enumerate() {
-            let rpe_half = set
-                .rpe
-                .as_ref()
-                .map(decimal_units)
-                .transpose()?
-                .map(|units| units / 500_000);
-            tx.execute("INSERT INTO prescribed_sets(id,routine_id,position,type,kilograms,rpe_half,load_description,notes) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",params![set.id,routine.id,position as i64,set.kind,text(&set.kilograms),rpe_half,set.load_description,set.notes])?;
-            set.id = Some(set.id.unwrap_or_else(|| tx.last_insert_rowid()));
-            for (position, portion) in set.portions.iter_mut().enumerate() {
-                tx.execute("INSERT INTO prescribed_portions(id,set_id,position,exercise_id,repetitions,seconds,metres,notes) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",params![portion.id,set.id,position as i64,portion.exercise_id,text(&portion.repetitions),text(&portion.seconds),text(&portion.metres),portion.notes])?;
-                portion.id = Some(portion.id.unwrap_or_else(|| tx.last_insert_rowid()));
-            }
-        }
+        write_sets(&tx, routine.id.unwrap(), &mut routine.sets, false)?;
         tx.commit()?;
         Ok(routine)
     }
@@ -108,7 +95,7 @@ impl Store {
         Ok(())
     }
 }
-fn read(connection: &Connection, id: i64) -> Result<Routine> {
+pub(crate) fn read(connection: &Connection, id: i64) -> Result<Routine> {
     let mut routine = connection
         .query_row("SELECT name,notes FROM routines WHERE id=?1", [id], |row| {
             Ok(Routine {
@@ -121,38 +108,7 @@ fn read(connection: &Connection, id: i64) -> Result<Routine> {
         })
         .optional()?
         .ok_or_else(|| format!("unknown routine ID {id}; use routine list"))?;
-    let mut statement = connection.prepare("SELECT id,type,kilograms,rpe_half,load_description,notes FROM prescribed_sets WHERE routine_id=?1 ORDER BY position")?;
-    routine.sets = statement
-        .query_map([id], |row| {
-            let half: Option<i64> = row.get(3)?;
-            Ok(PrescribedSet {
-                id: row.get(0)?,
-                kind: row.get(1)?,
-                kilograms: number(row.get(2)?)?,
-                rpe: number(
-                    half.map(|half| format!("{}.{}", half / 2, if half % 2 == 0 { 0 } else { 5 })),
-                )?,
-                load_description: row.get(4)?,
-                notes: row.get(5)?,
-                portions: vec![],
-            })
-        })?
-        .collect::<rusqlite::Result<_>>()?;
-    for set in &mut routine.sets {
-        let mut statement = connection.prepare("SELECT id,exercise_id,repetitions,seconds,metres,notes FROM prescribed_portions WHERE set_id=?1 ORDER BY position")?;
-        set.portions = statement
-            .query_map([set.id], |row| {
-                Ok(PrescribedPortion {
-                    id: row.get(0)?,
-                    exercise_id: row.get(1)?,
-                    repetitions: number(row.get(2)?)?,
-                    seconds: number(row.get(3)?)?,
-                    metres: number(row.get(4)?)?,
-                    notes: row.get(5)?,
-                })
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-    }
+    routine.sets = read_sets(connection, id, false)?;
     Ok(routine)
 }
 fn validate(
@@ -173,20 +129,26 @@ fn validate(
     if routine.sets.is_empty() {
         return Err("routine requires at least one prescribed set".into());
     }
-    let old_sets: HashSet<i64> = original
-        .into_iter()
-        .flat_map(|r| &r.sets)
-        .filter_map(|s| s.id)
-        .collect();
+    validate_sets(
+        connection,
+        &routine.sets,
+        original.map(|r| r.sets.as_slice()).unwrap_or(&[]),
+    )
+}
+pub(crate) fn validate_sets(
+    connection: &Connection,
+    sets_to_validate: &[PrescribedSet],
+    original: &[PrescribedSet],
+) -> Result<()> {
+    let old_sets: HashSet<i64> = original.iter().filter_map(|s| s.id).collect();
     let old_portions: HashSet<i64> = original
-        .into_iter()
-        .flat_map(|r| &r.sets)
+        .iter()
         .flat_map(|s| &s.portions)
         .filter_map(|p| p.id)
         .collect();
     let mut sets = HashSet::new();
     let mut portions = HashSet::new();
-    for set in &routine.sets {
+    for set in sets_to_validate {
         validate_id(set.id, &old_sets, &mut sets, "set")?;
         if !matches!(set.kind.as_str(), "warmup" | "main") {
             return Err("set type must be warmup or main".into());
@@ -247,4 +209,76 @@ fn validate(
         }
     }
     Ok(())
+}
+
+fn sql(query: &str, intention: bool) -> String {
+    if intention {
+        query
+            .replace("prescribed_sets", "intention_sets")
+            .replace("prescribed_portions", "intention_portions")
+            .replace("routine_id", "workout_id")
+    } else {
+        query.to_owned()
+    }
+}
+pub(crate) fn write_sets(
+    connection: &Connection,
+    owner_id: i64,
+    sets: &mut [PrescribedSet],
+    intention: bool,
+) -> Result<()> {
+    for (position, set) in sets.iter_mut().enumerate() {
+        let rpe_half = set
+            .rpe
+            .as_ref()
+            .map(decimal_units)
+            .transpose()?
+            .map(|units| units / 500_000);
+        connection.execute(&sql("INSERT INTO prescribed_sets(id,routine_id,position,type,kilograms,rpe_half,load_description,notes) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)", intention),params![set.id,owner_id,position as i64,set.kind,text(&set.kilograms),rpe_half,set.load_description,set.notes])?;
+        set.id = Some(set.id.unwrap_or_else(|| connection.last_insert_rowid()));
+        for (position, portion) in set.portions.iter_mut().enumerate() {
+            connection.execute(&sql("INSERT INTO prescribed_portions(id,set_id,position,exercise_id,repetitions,seconds,metres,notes) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)", intention),params![portion.id,set.id,position as i64,portion.exercise_id,text(&portion.repetitions),text(&portion.seconds),text(&portion.metres),portion.notes])?;
+            portion.id = Some(portion.id.unwrap_or_else(|| connection.last_insert_rowid()));
+        }
+    }
+    Ok(())
+}
+pub(crate) fn read_sets(
+    connection: &Connection,
+    id: i64,
+    intention: bool,
+) -> Result<Vec<PrescribedSet>> {
+    let mut statement = connection.prepare(&sql("SELECT id,type,kilograms,rpe_half,load_description,notes FROM prescribed_sets WHERE routine_id=?1 ORDER BY position", intention))?;
+    let mut sets: Vec<PrescribedSet> = statement
+        .query_map([id], |row| {
+            let half: Option<i64> = row.get(3)?;
+            Ok(PrescribedSet {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                kilograms: number(row.get(2)?)?,
+                rpe: number(
+                    half.map(|half| format!("{}.{}", half / 2, if half % 2 == 0 { 0 } else { 5 })),
+                )?,
+                load_description: row.get(4)?,
+                notes: row.get(5)?,
+                portions: vec![],
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    for set in &mut sets {
+        let mut statement = connection.prepare(&sql("SELECT id,exercise_id,repetitions,seconds,metres,notes FROM prescribed_portions WHERE set_id=?1 ORDER BY position", intention))?;
+        set.portions = statement
+            .query_map([set.id], |row| {
+                Ok(PrescribedPortion {
+                    id: row.get(0)?,
+                    exercise_id: row.get(1)?,
+                    repetitions: number(row.get(2)?)?,
+                    seconds: number(row.get(3)?)?,
+                    metres: number(row.get(4)?)?,
+                    notes: row.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+    }
+    Ok(sets)
 }

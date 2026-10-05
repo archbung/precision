@@ -9,6 +9,14 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Workout {
+    #[serde(skip)]
+    pub intention: Intention,
+    #[serde(skip)]
+    pub source_routine_id: Option<i64>,
+    #[serde(skip)]
+    pub original_source_id: Option<i64>,
+    #[serde(skip)]
+    pub original_source_name: Option<String>,
     pub schema_version: u32,
     pub id: Option<i64>,
     #[serde(default = "draft_state")]
@@ -18,6 +26,13 @@ pub struct Workout {
     pub end: Option<String>,
     pub notes: Option<String>,
     pub sets: Vec<PerformedSet>,
+}
+#[derive(Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Intention {
+    pub schema_version: u32,
+    pub notes: Option<String>,
+    pub sets: Vec<crate::routines::PrescribedSet>,
 }
 fn draft_state() -> String {
     "draft".into()
@@ -67,16 +82,36 @@ impl Store {
             .collect::<rusqlite::Result<Vec<i64>>>()?;
         ids.into_iter().map(|id| self.workout(id)).collect()
     }
-    pub fn start_workout(&mut self, date: String, start: Option<String>) -> Result<Workout> {
+    pub fn start_workout(
+        &mut self,
+        date: String,
+        start: Option<String>,
+        routine_id: Option<i64>,
+    ) -> Result<Workout> {
         validate_times(&date, &start, &None)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let routine = routine_id
+            .map(|id| crate::routines::read(&tx, id))
+            .transpose()?;
         tx.execute(
             "INSERT INTO workouts(state,date,start) VALUES ('draft',?1,?2)",
             params![date, start],
         )?;
-        let workout = read(&tx, tx.last_insert_rowid())?;
+        let id = tx.last_insert_rowid();
+        if let Some(mut routine) = routine {
+            tx.execute("UPDATE workouts SET source_routine_id=?1,original_source_id=?1,original_source_name=?2,intention_notes=?3 WHERE id=?4", params![routine.id, routine.name, routine.notes, id])?;
+            for set in &mut routine.sets {
+                set.id = None;
+                for portion in &mut set.portions {
+                    portion.id = None;
+                }
+            }
+            crate::routines::validate_sets(&tx, &routine.sets, &[])?;
+            crate::routines::write_sets(&tx, id, &mut routine.sets, true)?;
+        }
+        let workout = read(&tx, id)?;
         tx.commit()?;
         Ok(workout)
     }
@@ -107,10 +142,31 @@ impl Store {
                 portion.id = Some(portion.id.unwrap_or_else(|| tx.last_insert_rowid()));
             }
         }
+        let workout = read(&tx, id)?;
         tx.commit()?;
         Ok(workout)
     }
 
+    pub fn save_intention(&mut self, id: i64, mut intention: Intention) -> Result<Workout> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let original = read(&tx, id)?;
+        require_draft(&original)?;
+        if intention.schema_version != 1 {
+            return Err("unsupported intention schema_version; expected 1".into());
+        }
+        crate::routines::validate_sets(&tx, &intention.sets, &original.intention.sets)?;
+        tx.execute(
+            "UPDATE workouts SET intention_notes=?1 WHERE id=?2",
+            params![intention.notes, id],
+        )?;
+        tx.execute("DELETE FROM intention_sets WHERE workout_id=?1", [id])?;
+        crate::routines::write_sets(&tx, id, &mut intention.sets, true)?;
+        let workout = read(&tx, id)?;
+        tx.commit()?;
+        Ok(workout)
+    }
     pub fn finish_workout(&mut self, id: i64, end: Option<String>) -> Result<Workout> {
         let tx = self
             .connection
@@ -173,10 +229,14 @@ fn validate_times(date: &str, start: &Option<String>, end: &Option<String>) -> R
 fn read(connection: &Connection, id: i64) -> Result<Workout> {
     let mut workout = connection
         .query_row(
-            "SELECT state,date,start,end,notes FROM workouts WHERE id=?1",
+            "SELECT state,date,start,end,notes,source_routine_id,original_source_id,original_source_name,intention_notes FROM workouts WHERE id=?1",
             [id],
             |row| {
                 Ok(Workout {
+                    intention: Intention { schema_version: 1, notes: row.get(8)?, sets: vec![] },
+                    source_routine_id: row.get(5)?,
+                    original_source_id: row.get(6)?,
+                    original_source_name: row.get(7)?,
                     schema_version: 1,
                     id: Some(id),
                     state: row.get(0)?,
@@ -224,6 +284,7 @@ fn read(connection: &Connection, id: i64) -> Result<Workout> {
             })?
             .collect::<rusqlite::Result<_>>()?;
     }
+    workout.intention.sets = crate::routines::read_sets(connection, id, true)?;
     Ok(workout)
 }
 fn validate(

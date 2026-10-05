@@ -19,6 +19,20 @@ fn ok(db: &TempDir, args: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 fn write(db: &TempDir, document: &Value) -> String {
+    let mut document = document.clone();
+    if document.get("original_source_name").is_some() {
+        for field in [
+            "intention",
+            "source_routine_id",
+            "original_source_id",
+            "original_source_name",
+        ] {
+            document.as_object_mut().unwrap().remove(field);
+        }
+    }
+    write_raw(db, &document)
+}
+fn write_raw(db: &TempDir, document: &Value) -> String {
     let path = db.path().join("workout.json");
     std::fs::write(&path, serde_json::to_vec(document).unwrap()).unwrap();
     path.to_str().unwrap().into()
@@ -193,12 +207,20 @@ fn invalid_updates_and_finishes_roll_back_every_field() {
         ("/sets/0/portions/0", "seconds", json!(2)),
     ] {
         let mut doc = before.clone();
+        for field in [
+            "intention",
+            "source_routine_id",
+            "original_source_id",
+            "original_source_name",
+        ] {
+            doc.as_object_mut().unwrap().remove(field);
+        }
         doc.pointer_mut(pointer)
             .unwrap()
             .as_object_mut()
             .unwrap()
             .insert(field.into(), value);
-        let path = write(&db, &doc);
+        let path = write_raw(&db, &doc);
         assert!(
             !run(&db, &["workout", "update", "1", "--file", &path])
                 .status
