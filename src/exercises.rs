@@ -17,7 +17,7 @@ pub struct Exercise {
     pub secondary_muscles: Vec<i64>,
 }
 pub struct Store {
-    connection: Connection,
+    pub(crate) connection: Connection,
 }
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
@@ -29,9 +29,9 @@ impl Store {
         connection.pragma_update(None, "foreign_keys", true)?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 1 {
+        if version > 2 {
             return Err(format!(
-                "database schema version {version} is newer than supported version 1"
+                "database schema version {version} is newer than supported version 2"
             )
             .into());
         }
@@ -77,6 +77,10 @@ impl Store {
                 }
             }
             tx.pragma_update(None, "user_version", 1)?;
+        }
+        if version < 2 {
+            tx.execute_batch(include_str!("../migrations/0002.sql"))?;
+            tx.pragma_update(None, "user_version", 2)?;
         }
         tx.commit()?;
         Ok(Self { connection })

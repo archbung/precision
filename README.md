@@ -1,6 +1,7 @@
 # Precision
 
-A local exercise-definition CLI backed by SQLite. Build with `cargo build`;
+A local CLI for exercise definitions and reusable workout routines, backed by
+SQLite. Build with `cargo build`;
 run `cargo run -- --help` or use `target/debug/precision`.
 
 The default database is `$HOME/.precision/precision.sqlite3` on every platform.
@@ -45,8 +46,8 @@ Measurement, load convention, and defining equipment are creation-only. Create
 another exercise for changed definitions. `external` means total external
 kilograms, including the barbell/sled/both dumbbells. `added-bodyweight` means
 signed added kilograms: positive adds weight, negative denotes assistance, and
-zero means no addition or assistance. This slice defines activities; it does
-not record loads or performances.
+zero means no addition or assistance. Exercise commands define activities;
+they do not record performances.
 
 ## JSON reads
 
@@ -86,3 +87,102 @@ unknown IDs, empty/duplicate names, overlapping muscle references, and storage
 failures produce errors on stderr with a nonzero exit status. No partial
 exercise changes are saved. Run `cargo test` for integration tests invoking
 separate compiled CLI processes against temporary databases.
+
+## Workout routines
+
+Routines are reusable ordered prescriptions. Names are trimmed and nonempty,
+with duplicates allowed because IDs distinguish routines.
+
+```sh
+precision routine create --file routine.json
+precision routine list                 # human output; also accepts --json
+precision routine show 1 --json > edited-routine.json
+precision routine update 1 --file edited-routine.json
+precision routine delete 1
+```
+
+Create a repetition exercise and a distance exercise first (use their displayed
+IDs instead of the example's `1` and `2`). Save this as `routine.json`:
+
+```json
+{
+  "schema_version": 1,
+  "name": "Squat and carry",
+  "notes": "Keep the complex load setup unchanged",
+  "sets": [
+    {
+      "type": "warmup",
+      "kilograms": 0,
+      "rpe": 5.5,
+      "load_description": "empty bar",
+      "notes": "Controlled tempo",
+      "portions": [{"exercise_id": 1, "repetitions": 5}]
+    },
+    {
+      "kilograms": 20.125,
+      "portions": [
+        {"exercise_id": 1, "repetitions": 5, "notes": "Successful reps on each side if unilateral"},
+        {"exercise_id": 2, "metres": 12.5},
+        {"exercise_id": 1, "repetitions": null}
+      ]
+    }
+  ]
+}
+```
+
+A routine requires at least one set; each set requires at least one portion.
+Array order determines set and portion order, including repeated exercises in
+a complex. `type` is `warmup` or `main`, defaulting to `main`. Portions require
+an existing `exercise_id`. Their optional quantity field is `repetitions`,
+`seconds`, or `metres`, matching the exercise's measurement mode. Repetitions
+are whole nonnegative minimum **successful** counts (on each side for unilateral
+activity). Seconds and metres are nonnegative minima and may be fractional.
+Other measurement fields cannot contain a quantity; use notes for secondary
+measurements. Numeric values never infer target achievement.
+
+Set `kilograms` is a shared minimum load, interpreted using every portion's
+exercise load convention. Negative kilograms are accepted only if all portions
+use `added-bodyweight`; mixed conventions are allowed with nonnegative or
+unspecified kilograms. Set `rpe` is an optional whole-set maximum from 1 to 10
+in half-point steps. Optional `load_description` can prescribe resistance with
+unknown kilograms. `notes` is an optional string at routine, set, and portion
+levels. Omitted or `null` optional targets mean no numeric instruction; explicit
+zero remains zero. `show --json` includes null optional fields and generated IDs.
+
+Create documents omit routine, set, and portion `id` fields (null is also
+accepted). Update documents may retain exported IDs belonging to that routine;
+the routine ID, if supplied, must match the command destination. New sets and
+portions omit IDs. Duplicate or foreign nested IDs are rejected; removed IDs
+cannot be resurrected or recycled. Updates replace the complete routine,
+including notes and optional values; omission clears optional values instead
+of retaining the old values. An update may reorder retained entries, move a
+portion between sets within its routine, add entries, or remove entries.
+Validation and replacement occur in one transaction, so any failure leaves the
+original intact. Deletion removes only the routine and its prescribed children;
+it introduces no workout cascade.
+
+All JSON objects reject unknown fields. Rest, supersets/grouping, judging flags,
+structured failure, ranges, and programming data are not supported in this
+slice and are rejected, including empty rest/group fields. Malformed JSON,
+unsupported document versions, wrong field types, and invalid references fail
+with a nonzero exit status and stderr explanation.
+
+### Exact decimal precision
+
+Supply JSON numbers, not quoted strings. Quantities and kilograms support values
+with at most **12 integer places and 6 fractional places** after removing
+insignificant zeros; the largest magnitude is `999999999999.999999`, and the
+smallest nonzero fractional step is `0.000001`. Exponent notation is accepted
+when the exact value fits these bounds (`1e-6` fits; `1e-7` does not). Repetition
+quantities must additionally be whole numbers. No value is rounded to fit.
+NaN and infinity are invalid JSON and rejected. Decimal spellings are parsed
+without binary floating point and stored as text in SQLite; RPE is stored as
+integer half-point units. Numeric meaning is preserved on export, though
+insignificant spelling differences such as RPE `5` versus `5.0` may change.
+
+Migration version 2 adds routines and ordered prescribed sets/portions with
+relational exercise references. Existing exercises and catalogs survive the
+migration unchanged. Stable IDs use monotonic SQLite identities, and every
+connection enforces foreign keys. CLI integration tests cover restart reads,
+replacement order/identity, rejected replacement rollback, decimal limits,
+complexes, omitted versus zero quantities, and deletion.

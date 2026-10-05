@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::{fmt, str::FromStr};
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Measurement {
     Repetitions,
@@ -36,7 +36,7 @@ impl fmt::Display for Measurement {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LoadConvention {
     External,
