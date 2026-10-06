@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Precision Rust · One decision for every variant</title><link rel="stylesheet" href="../assets/course.css"></head><body>
+<p class="eyebrow">LESSON 0001 · 30 MINUTES · PREDICT, COMPILE, EXPLAIN</p><h1>One decision for every variant</h1>
+<p>Your maintenance skill today: explain how Rust makes you handle every measurement mode. Start with the enum and <code>as_str</code> in <a href="../../../../src/exercise_types.rs">src/exercise_types.rs</a>. Precision's <a href="../../../adr/0001-distinguish-exercises-by-measurement-and-loading.md">exercise identity decision</a> gives this a familiar domain meaning.</p>
+<p>Your Haskell background gives us a bridge: read this as a case analysis over alternatives, then test exactly what Rust checks. Spend about 5 minutes reading, 5 predicting, 15 experimenting, and 5 explaining.</p><h2>Read just this part</h2>
+<pre><code>pub enum Measurement {
+    Repetitions,
+    Duration,
+    Distance,
+}
+// Inside impl Measurement:
+match self {
+    Self::Repetitions =&gt; "repetitions",
+    Self::Duration =&gt; "duration",
+    Self::Distance =&gt; "distance",
+}</code></pre>
+<p>A measurement value is one of these alternatives. Here <code>Self</code> means <code>Measurement</code>. Each arm pairs a pattern with the expression after <code>=&gt;</code>; the matched expression becomes the match's value. Rust requires all possibilities to be covered. Sources: <a href="https://doc.rust-lang.org/book/ch06-01-defining-an-enum.html">enums</a> and <a href="https://doc.rust-lang.org/book/ch06-02-match.html">match</a>.</p>
+<p>For this lesson, treat the surrounding function signature as “returns text.” We will unpack <code>self</code>, <code>&amp;'static str</code>, traits, and <code>Result</code> individually later.</p>
+<h2>Predict before running</h2><div class="task"><ol>
+<li>What text does <code>Measurement::Duration.as_str()</code> return? Point to the arm that determines it.</li>
+<li>If you remove only the Distance arm while keeping all three variants, does compilation succeed? Explain why.</li>
+<li>Would the compiler reject changing the Duration arm's output to <code>"distance"</code>? What does that tell you about the boundary between compiler checks and behavior tests?</li>
+</ol><p>Send your predictions and reasoning to the teaching agent. Feedback starts with a hint, then another attempt; a full solution comes only after your attempt or request.</p></div>
+<details><summary>Hint 1 · Trace one value</summary><p>Compare the value before the dot with the patterns to the left of each arrow. Which pattern matches?</p></details>
+<details><summary>Hint 2 · Count the cases</summary><p>Compare the variants declared in the enum with the cases covered by the edited match. Is any input left without an expression?</p></details>
+<h2>Your compiler experiment</h2><p>After predicting, save a scratch copy of only the enum and its <code>impl Measurement</code> under this learning workspace (omit serde attributes and imports; add an empty <code>fn main() {}</code>). Remove one arm yourself. Compile it with <code>rustc --emit=metadata --out-dir /tmp scratch.rs</code> from the scratch file's directory. Report the diagnostic, restore the arm, and explain the difference. Do not change the production enum or add a new domain measurement.</p>
+<p>If making that scratch copy is unfamiliar, ask for help with the setup; the actual edit remains yours. The teacher has not implemented this exercise.</p>
+<h2>Transfer the idea</h2><p>In your scratch copy, try a second version with a wildcard arm instead of one explicit variant arm. Predict what happens if you then add a hypothetical fourth variant to the scratch enum. Compile both versions and explain which one forces you to revisit the mapping. This is an isolated language experiment, not a proposed domain change. Then explain how the same reasoning applies to the existing <code>LoadConvention::as_str</code>.</p><h2>Keep the evidence precise</h2><p>The enum reflects an existing domain design choice. Exhaustiveness is a language correctness check. Whether a string is the right representation needs a behavioral check. We have made no claim about the module's overall style or performance.</p>
+<p>At the next session, explain from memory what removing a match arm changes, then apply that idea to <code>LoadConvention</code>. Completion means an explanation and compiler evidence, not merely reading this page. Ask the agent follow-up questions whenever something is unclear.</p>
+<nav><a href="../reference/enum-match.html">Quick reference</a> · <a href="../RESOURCES.md">Sources</a> · <a href="../README.md">Track and milestone</a></nav>
+</body></html>

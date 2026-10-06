@@ -1,0 +1,11 @@
+:root { color-scheme: light; font-family: Georgia, serif; color: #182c35; background: #f8f6ef; }
+body { max-width: 760px; margin: 3rem auto; padding: 0 1.5rem; line-height: 1.65; }
+h1, h2, nav, .eyebrow { font-family: system-ui, sans-serif; line-height: 1.25; }
+h1 { font-size: 2.3rem; } h2 { margin-top: 2rem; font-size: 1.25rem; }
+.eyebrow { color: #47645b; font-size: .85rem; letter-spacing: .06em; }
+a { color: #205f67; text-underline-offset: .18em; }
+pre { overflow-x: auto; padding: 1.2rem; background: #eaece5; border-left: 3px solid #587669; line-height: 1.5; }
+code { font-family: ui-monospace, monospace; font-size: .9em; }
+details { padding: .7rem 0; border-top: 1px solid #ccd3c9; } summary { cursor: pointer; }
+.task { border: 1px solid #bac9bf; padding: 1rem 1.2rem; }
+@media print { body { max-width: none; margin: 0; background: white; font-size: 11pt; } pre, .task { break-inside: avoid; } a { color: inherit; } }

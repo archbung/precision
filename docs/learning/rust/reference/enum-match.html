@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Precision Rust · Enum and match reference</title><link rel="stylesheet" href="../assets/course.css"></head><body>
+<p class="eyebrow">PRECISION · RUST REFERENCE</p><h1>Enum → exhaustive match</h1>
+<p>An <code>enum</code> names a type with alternatives called variants. An enum value is one variant at a time. See the <a href="https://doc.rust-lang.org/book/ch06-01-defining-an-enum.html">official enum chapter</a>.</p>
+<pre><code>match self {
+    Self::Repetitions =&gt; "repetitions",
+    Self::Duration =&gt; "duration",
+    Self::Distance =&gt; "distance",
+}</code></pre>
+<p>Within <code>impl Measurement</code>, <code>Self</code> names <code>Measurement</code>. Read an arm as “if this pattern matches, evaluate this expression.” The matching expression supplies the value of the whole match. Every possible input must be covered. See the <a href="https://doc.rust-lang.org/book/ch06-02-match.html">official match chapter</a>.</p>
+<p>Explicit variant arms make a newly added variant require a decision here. A wildcard <code>_</code> covers remaining cases, which may or may not be desirable for a particular contract. Exhaustiveness checks coverage; it does not prove the chosen string is correct.</p>
+<p>This is a syntax reference, not a record of learner mastery. Borrowed string types, traits, and errors are reserved for later lessons.</p>
+<nav><a href="../lessons/0001-exhaustive-match.html">Practice this concept</a> · <a href="../README.md">Track</a></nav>
+</body></html>
