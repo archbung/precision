@@ -1,14 +1,7 @@
-mod aggregate_values;
-mod comparison;
-mod conversion;
-mod exercise_types;
-mod exercises;
-mod organization;
-mod routines;
-mod workouts;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use exercise_types::{LoadConvention, Measurement};
 use exercises::{Exercise, Store};
+use precision::{comparison, exercise_types, exercises, organization, routines, workouts};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -25,6 +18,8 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Interactive keyboard draft lifecycle and read-only inspection.
+    Tui,
     Workout {
         #[command(subcommand)]
         command: WorkoutCommand,
@@ -206,22 +201,6 @@ struct Muscles {
     primary_muscle: Option<i64>,
     #[arg(long)]
     secondary_muscle: Vec<i64>,
-}
-impl ValueEnum for Measurement {
-    fn value_variants<'a>() -> &'a [Self] {
-        &[Self::Repetitions, Self::Duration, Self::Distance]
-    }
-    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
-        Some(clap::builder::PossibleValue::new(self.as_str()))
-    }
-}
-impl ValueEnum for LoadConvention {
-    fn value_variants<'a>() -> &'a [Self] {
-        &[Self::External, Self::AddedBodyweight]
-    }
-    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
-        Some(clap::builder::PossibleValue::new(self.as_str()))
-    }
 }
 fn print_exercise(
     store: &Store,
@@ -448,8 +427,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 .join(".precision/precision.sqlite3")
         }
     };
+    if matches!(cli.command, Command::Tui) {
+        return precision::tui::run(&path);
+    }
     let mut store = Store::open(&path)?;
     match cli.command {
+        Command::Tui => unreachable!(),
         Command::Workout { command } => match command {
             WorkoutCommand::Reuse { id, date, start } => {
                 let workout = store.reuse_workout(id, date, start)?;

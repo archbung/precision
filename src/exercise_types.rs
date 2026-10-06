@@ -1,3 +1,4 @@
+use clap::ValueEnum;
 use serde::Serialize;
 use std::{fmt, str::FromStr};
 
@@ -65,5 +66,22 @@ impl FromStr for LoadConvention {
 impl fmt::Display for LoadConvention {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
+    }
+}
+
+impl ValueEnum for Measurement {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[Self::Repetitions, Self::Duration, Self::Distance]
+    }
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        Some(clap::builder::PossibleValue::new(self.as_str()))
+    }
+}
+impl ValueEnum for LoadConvention {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[Self::External, Self::AddedBodyweight]
+    }
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        Some(clap::builder::PossibleValue::new(self.as_str()))
     }
 }

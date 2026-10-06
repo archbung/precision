@@ -466,3 +466,35 @@ performance stay unchanged; subsequent reuse reads the replaced current source.
 The bundled muscle catalog includes Adductors (ID 13) for hip adduction.
 Existing databases receive this entry automatically through migration 0007;
 all earlier muscle IDs remain stable.
+
+## Interactive draft lifecycle
+
+Launch `precision tui [--db PATH]` in an interactive terminal (80×24 or larger).
+The selected database and current draft ID stay visible. Tab cycles startup
+fields: today's local date, optional full RFC3339 start time, and optional routine
+ID. Available routines are listed by ID; Up/Down scrolls longer lists. Blank time remains unknown; blank
+routine starts without intention. F2 or Enter starts and immediately saves a draft.
+
+F3 lists only drafts; arrows and Enter explicitly resume one. F4 lists workouts
+for reuse of their **current live source routine**, using the startup date/time.
+Missing or deleted sources produce a visible error and create no draft. Escape
+returns to startup while retaining fields. F10 (or Ctrl+C) quits and retains saved
+drafts. Text fields accept normal typing and Backspace; F1 displays help.
+
+Inside a draft, Tab switches separately labelled read-only actual activity and
+preserved intention. Arrows scroll complete structured details, including notes,
+portions, exact quantities, rest, supersets, provenance, and exercise definitions.
+Actual repetition counts mean attempts; prescribed counts mean minimum successful
+repetitions. Views introduce no correspondence or target-achievement inference.
+This first TUI slice does not edit activity, finish, or discard; use the existing
+CLI for those operations. Resize retains input. Unconfirmed startup text is
+memory-only; confirmed drafts survive restarts. Normal and error exits restore
+the terminal. Noninteractive startup fails before opening the database.
+
+The `precision` library exposes the existing `Store` operations and supported
+application types to both adapters. Validation, decimals, migrations, and atomic
+storage remain shared. `tui::Session` provides the headless user-action/visible-state
+interface tested against temporary databases.
+
+On Unix, `cargo build` then `python3 tests/terminal_smoke.py` checks real
+keyboard delivery, resize, retained drafts, and terminal restoration via a PTY.
