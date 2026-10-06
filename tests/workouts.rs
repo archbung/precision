@@ -7,7 +7,10 @@ fn run(db: &TempDir, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_precision"))
         .arg("--db")
         .arg(db.path().join("db.sqlite3"))
-        .args(args)
+        .args(support::with_workout_revision(
+            &db.path().join("db.sqlite3"),
+            args,
+        ))
         .output()
         .unwrap()
 }
@@ -121,7 +124,9 @@ fn actual_activity_preserves_zero_attempt_notes_complexes_and_cross_midnight_tim
     }
     let path = write(&db, &saved);
     ok(&db, &["workout", "update", "1", "--file", &path]);
-    assert_eq!(show(&db, "1"), saved);
+    let mut expected = saved.clone();
+    expected["revision"] = json!(2);
+    assert_eq!(show(&db, "1"), expected);
     ok(
         &db,
         &[
@@ -292,6 +297,7 @@ fn retained_identities_follow_order_and_removed_or_foreign_ids_cannot_return() {
             .status
             .success()
     );
+    reduced["revision"] = json!(3);
     assert_eq!(show(&db, "1"), reduced);
 }
 #[test]

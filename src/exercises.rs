@@ -29,9 +29,9 @@ impl Store {
         connection.pragma_update(None, "foreign_keys", true)?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 8 {
+        if version > 9 {
             return Err(format!(
-                "database schema version {version} is newer than supported version 8"
+                "database schema version {version} is newer than supported version 9"
             )
             .into());
         }
@@ -108,6 +108,10 @@ impl Store {
                 tx.execute_batch(include_str!("../migrations/0008.sql"))?;
             }
             tx.pragma_update(None, "user_version", 8)?;
+        }
+        if version < 9 {
+            tx.execute_batch(include_str!("../migrations/0009.sql"))?;
+            tx.pragma_update(None, "user_version", 9)?;
         }
         tx.commit()?;
         Ok(Self { connection })

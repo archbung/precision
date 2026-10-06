@@ -86,7 +86,7 @@ enum RoutineCommand {
 #[derive(Subcommand)]
 #[command(
     about = "Resumable workouts with independent intention",
-    after_help = "Update replaces metadata and actual sets using --file PATH; show --json exports schema_version: 1 with intention and provenance. Remove intention/source fields for actual updates; use intention update for prescribed activity. Completed workouts are read-only. See README.md for schema. Intended and actual rest/supersets are independent. Rest uses N-1 optional seconds; supersets reference owner-local set IDs. Reordering requires replacement rest."
+    after_help = "Update requires the revision from show --json --actual-only and replaces metadata and actual sets using --file PATH; show --json exports schema_version: 1 with intention and provenance. Remove intention/source fields for actual updates; use intention update for prescribed activity. Completed workouts are read-only. See README.md for schema. Intended and actual rest/supersets are independent. Rest uses N-1 optional seconds; supersets reference owner-local set IDs. Reordering requires replacement rest."
 )]
 enum WorkoutCommand {
     /// Start an empty draft using the workout's current source routine.
@@ -101,9 +101,7 @@ enum WorkoutCommand {
         start: Option<String>,
     },
     /// Compare independent prescribed and actual lists by exercise and set type.
-    Compare {
-        id: i64,
-    },
+    Compare { id: i64 },
     Intention {
         #[command(subcommand)]
         command: IntentionCommand,
@@ -140,17 +138,32 @@ enum WorkoutCommand {
     },
     Finish {
         id: i64,
+        #[arg(
+            long,
+            help = "Current revision from workout show ID --json; reload after conflicts"
+        )]
+        revision: i64,
         #[arg(long)]
         end: Option<String>,
     },
     Discard {
         id: i64,
+        #[arg(
+            long,
+            help = "Current revision from workout show ID --json; reload after conflicts"
+        )]
+        revision: i64,
     },
 }
 #[derive(Subcommand)]
 enum IntentionCommand {
     Update {
         id: i64,
+        #[arg(
+            long,
+            help = "Current revision from workout show ID --json; reload after conflicts"
+        )]
+        revision: i64,
         #[arg(long)]
         file: PathBuf,
     },
@@ -342,6 +355,7 @@ fn print_workout(
         workout.start.as_deref().unwrap_or("unknown"),
         workout.end.as_deref().unwrap_or("unknown")
     );
+    println!("  Revision: {}", workout.revision.unwrap());
     if let Some(notes) = &workout.notes {
         println!("  Session notes: {notes}");
     }
@@ -440,10 +454,10 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
             WorkoutCommand::Compare { id } => comparison::print(&store, &store.workout(id)?)?,
             WorkoutCommand::Intention {
-                command: IntentionCommand::Update { id, file },
+                command: IntentionCommand::Update { id, revision, file },
             } => {
                 let intention = serde_json::from_reader(std::fs::File::open(file)?)?;
-                let workout = store.save_intention(id, intention)?;
+                let workout = store.save_intention(id, revision, intention)?;
                 print_workout(&store, &workout, false)?;
             }
             WorkoutCommand::Start {
@@ -491,12 +505,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 let workout = store.save_workout(id, document)?;
                 print_workout(&store, &workout, false)?;
             }
-            WorkoutCommand::Finish { id, end } => {
-                let workout = store.finish_workout(id, end)?;
+            WorkoutCommand::Finish { id, revision, end } => {
+                let workout = store.finish_workout(id, revision, end)?;
                 print_workout(&store, &workout, false)?;
             }
-            WorkoutCommand::Discard { id } => {
-                store.discard_workout(id)?;
+            WorkoutCommand::Discard { id, revision } => {
+                store.discard_workout(id, revision)?;
                 println!("Discarded workout {id}.");
             }
         },

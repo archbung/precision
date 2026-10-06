@@ -9,6 +9,8 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Workout {
+    #[serde(default, deserialize_with = "revision_value")]
+    pub revision: Option<i64>,
     #[serde(default, deserialize_with = "crate::organization::rest_array")]
     pub rest: Option<Vec<crate::organization::Rest>>,
     #[serde(default)]
@@ -41,6 +43,15 @@ pub struct Intention {
     pub schema_version: u32,
     pub notes: Option<String>,
     pub sets: Vec<crate::routines::PrescribedSet>,
+}
+fn revision_value<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<i64>, D::Error> {
+    Option::<i64>::deserialize(deserializer).map_err(|_| {
+        serde::de::Error::custom(
+            "revision must be a nonnegative integer from workout show ID --json --actual-only",
+        )
+    })
 }
 fn draft_state() -> String {
     "draft".into()
@@ -176,10 +187,11 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let original = read(&tx, id)?;
         require_draft(&original)?;
+        require_revision(&original, workout.revision)?;
         validate(&tx, &mut workout, Some(&original))?;
         workout.id = Some(id);
         tx.execute(
-            "UPDATE workouts SET date=?1,start=?2,end=?3,notes=?4 WHERE id=?5",
+            "UPDATE workouts SET revision=revision+1,date=?1,start=?2,end=?3,notes=?4 WHERE id=?5",
             params![workout.date, workout.start, workout.end, workout.notes, id],
         )?;
         tx.execute("DELETE FROM performed_sets WHERE workout_id=?1", [id])?;
@@ -209,12 +221,18 @@ impl Store {
         Ok(workout)
     }
 
-    pub fn save_intention(&mut self, id: i64, mut intention: Intention) -> Result<Workout> {
+    pub fn save_intention(
+        &mut self,
+        id: i64,
+        revision: i64,
+        mut intention: Intention,
+    ) -> Result<Workout> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let original = read(&tx, id)?;
         require_draft(&original)?;
+        require_revision(&original, Some(revision))?;
         if intention.schema_version != 1 {
             return Err("unsupported intention schema_version; expected 1".into());
         }
@@ -232,7 +250,7 @@ impl Store {
             &original.intention.supersets,
         )?;
         tx.execute(
-            "UPDATE workouts SET intention_notes=?1 WHERE id=?2",
+            "UPDATE workouts SET revision=revision+1,intention_notes=?1 WHERE id=?2",
             params![intention.notes, id],
         )?;
         tx.execute("DELETE FROM intention_sets WHERE workout_id=?1", [id])?;
@@ -248,12 +266,18 @@ impl Store {
         tx.commit()?;
         Ok(workout)
     }
-    pub fn finish_workout(&mut self, id: i64, end: Option<String>) -> Result<Workout> {
+    pub fn finish_workout(
+        &mut self,
+        id: i64,
+        revision: i64,
+        end: Option<String>,
+    ) -> Result<Workout> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut workout = read(&tx, id)?;
         require_draft(&workout)?;
+        require_revision(&workout, Some(revision))?;
         if workout.sets.is_empty() {
             return Err("finish requires at least one performed set".into());
         }
@@ -262,22 +286,40 @@ impl Store {
         }
         validate_times(&workout.date, &workout.start, &workout.end)?;
         tx.execute(
-            "UPDATE workouts SET state='finished',end=?1 WHERE id=?2",
+            "UPDATE workouts SET revision=revision+1,state='finished',end=?1 WHERE id=?2",
             params![workout.end, id],
         )?;
         workout.state = "finished".into();
+        workout.revision = Some(revision + 1);
         tx.commit()?;
         Ok(workout)
     }
-    pub fn discard_workout(&mut self, id: i64) -> Result<()> {
+    pub fn discard_workout(&mut self, id: i64, revision: i64) -> Result<()> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        require_draft(&read(&tx, id)?)?;
+        let original = read(&tx, id)?;
+        require_draft(&original)?;
+        require_revision(&original, Some(revision))?;
         tx.execute("DELETE FROM workouts WHERE id=?1", [id])?;
         tx.commit()?;
         Ok(())
     }
+}
+#[derive(Debug)]
+pub struct RevisionConflict;
+impl std::fmt::Display for RevisionConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("stale workout revision; inspect latest saved activity, then explicitly abandon/reopen (CLI: workout show ID --json --actual-only)")
+    }
+}
+impl std::error::Error for RevisionConflict {}
+fn require_revision(workout: &Workout, revision: Option<i64>) -> Result<()> {
+    let revision = revision.ok_or("missing revision; reload with workout show ID --json --actual-only and retain its revision")?;
+    if revision < 0 || Some(revision) != workout.revision {
+        return Err(RevisionConflict.into());
+    }
+    Ok(())
 }
 fn require_draft(workout: &Workout) -> Result<()> {
     if workout.state != "draft" {
@@ -310,10 +352,11 @@ fn validate_times(date: &str, start: &Option<String>, end: &Option<String>) -> R
 fn read(connection: &Connection, id: i64) -> Result<Workout> {
     let mut workout = connection
         .query_row(
-            "SELECT state,date,start,end,notes,source_routine_id,original_source_id,original_source_name,intention_notes FROM workouts WHERE id=?1",
+            "SELECT state,date,start,end,notes,source_routine_id,original_source_id,original_source_name,intention_notes,revision FROM workouts WHERE id=?1",
             [id],
             |row| {
                 Ok(Workout {
+                    revision: Some(row.get(9)?),
                     intention: Intention { schema_version: 1, notes: row.get(8)?, rest: None, supersets: vec![], sets: vec![] },
                     source_routine_id: row.get(5)?,
                     original_source_id: row.get(6)?,

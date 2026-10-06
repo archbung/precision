@@ -37,7 +37,7 @@ fn fresh_database_seeds_exercises_and_reopening_preserves_them() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        8
+        9
     );
     assert!(
         !connection
@@ -55,7 +55,7 @@ fn upgrading_preserves_existing_catalog_even_when_empty() {
         let path = directory.path().join("db.sqlite3");
         list(&path);
         let connection = rusqlite::Connection::open(&path).unwrap();
-        connection.execute_batch("DELETE FROM exercise_equipment; DELETE FROM exercise_secondary_muscles; DELETE FROM exercises; PRAGMA user_version=7;").unwrap();
+        connection.execute_batch("DELETE FROM exercise_equipment; DELETE FROM exercise_secondary_muscles; DELETE FROM exercises; ALTER TABLE workouts DROP COLUMN revision; PRAGMA user_version=7;").unwrap();
         if populated {
             connection.execute_batch("INSERT INTO exercises(id,name,name_key,measurement,load_convention) VALUES(1,'My exercise','my exercise','distance','external');").unwrap();
         }

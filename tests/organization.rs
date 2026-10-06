@@ -7,7 +7,7 @@ fn run(db: &TempDir, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_precision"))
         .arg("--db")
         .arg(db.path().join("db"))
-        .args(args)
+        .args(support::with_workout_revision(&db.path().join("db"), args))
         .output()
         .unwrap()
 }

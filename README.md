@@ -200,7 +200,9 @@ precision workout start --date 2026-10-05 --start 2026-10-05T23:50:00+07:00
 precision workout list --drafts
 precision workout show 1 --json --actual-only > workout.json
 precision workout update 1 --file workout.json
-precision workout finish 1 --end 2026-10-06T00:20:00+07:00
+precision workout show 1 --json --actual-only > latest.json
+# Use the revision in latest.json (1 after the first successful update):
+precision workout finish 1 --revision 1 --end 2026-10-06T00:20:00+07:00
 precision workout list
 ```
 
@@ -208,10 +210,27 @@ precision workout list
 Start prints the durable workout ID and creates a clearly marked draft with no
 performed sets. `workout list [--json]` lists finished workouts in ID order;
 `--drafts` includes drafts as well. `workout show ID [--json]` inspects either
-state. `workout discard ID` permanently removes a draft and its activity.
+state. `workout discard ID --revision REVISION` permanently removes a draft and its activity.
 Finished workouts are read-only: update, finish again, and discard fail.
 `finish` requires at least one performed set and atomically saves the state and
 optional end timestamp; omission retains an end already supplied by update.
+
+Workout mutations use a **transactional revision**. Migration 9 gives existing
+workouts revision `0`; each confirmed actual/intention update and finish advances
+it by one. Actual exports include `revision`, a nonnegative JSON integer; retain
+that value unchanged while editing. `workout update` requires a matching revision,
+including when replacing empty activity. Missing, null, negative, noninteger,
+and stale values fail: reload using `workout show ID --json --actual-only`, inspect
+saved activity, and deliberately reapply an edit to a fresh export. There is no
+unconditional overwrite option. Rejected writes change neither activity nor
+revision. This deliberately changes the earlier update contract: old documents
+without revisions must be re-exported before submitting them.
+
+`finish`, `discard`, and `intention update` require `--revision REVISION` from
+`workout show ID --json`. An intention update preserves actual activity while
+advancing the same workout revision, invalidating older actual editors. Actual
+updates preserve intention and source provenance. Reusable routine revisions
+remain separate from workout revisions.
 
 An update replaces the entire session metadata and actual activity. Example
 (use an existing repetition exercise ID):
@@ -219,6 +238,7 @@ An update replaces the entire session metadata and actual activity. Example
 ```json
 {
   "schema_version": 1,
+  "revision": 0,
   "date": "2026-10-05",
   "start": "2026-10-05T23:50:00+07:00",
   "end": null,
@@ -292,7 +312,7 @@ provenance alongside the actual update fields. To edit prescriptions, extract th
 jq .intention > intention.json`) and submit:
 
 ```sh
-precision workout intention update 1 --file intention.json
+precision workout intention update 1 --revision CURRENT_REVISION --file intention.json
 ```
 
 An intention document contains `schema_version: 1`, optional `notes`, `rest`,
@@ -481,20 +501,42 @@ Missing or deleted sources produce a visible error and create no draft. Escape
 returns to startup while retaining fields. F10 (or Ctrl+C) quits and retains saved
 drafts. Text fields accept normal typing and Backspace; F1 displays help.
 
-Inside a draft, Tab switches separately labelled read-only actual activity and
-preserved intention. Arrows scroll complete structured details, including notes,
-portions, exact quantities, rest, supersets, provenance, and exercise definitions.
-Actual repetition counts mean attempts; prescribed counts mean minimum successful
-repetitions. Views introduce no correspondence or target-achievement inference.
-This first TUI slice does not edit activity, finish, or discard; use the existing
-CLI for those operations. Resize retains input. Unconfirmed startup text is
-memory-only; confirmed drafts survive restarts. Normal and error exits restore
-the terminal. Noninteractive startup fails before opening the database.
+Inside a draft, Tab switches actual activity and separately labelled read-only
+preserved intention. Up/Down selects actual sets and scrolls intention; PgUp/PgDown scrolls details. Actual repetition
+counts mean attempts; prescribed counts mean minimum successful repetitions.
+Views introduce no correspondence or target-achievement inference.
+
+F5 searches exercises by case-insensitive name substring. Results show equipment,
+measurement mode, and load convention; arrows select, Enter opens an ordinary
+single-portion recording form, and Escape cancels. Tab/Up/Down moves between
+warmup/main type, kilograms, load description, measurement, RPE, white/red flags,
+and set/portion/session notes. Optional blanks stay unknown; explicit zero and
+exact decimal text are preserved. Enter or F12 validates and immediately saves.
+Enter on a selected actual set edits it. F6 duplicates its structure/type/load
+into an unsaved form with blank quantity, observations and set/portion notes;
+rest and grouping are not copied. F7 in the intention view seeds a form from
+prescribed structure/type/load with blank actual quantity and separately labelled
+targets. Existing complex sets remain inspectable; use the CLI to edit complexes,
+rest, or supersets in this slice.
+
+Escape cancels only the current form; confirmed saves remain durable. Errors
+retain input for Enter/F12 retry or Escape cancel. F11 inspects latest saved
+activity without changing the rejected form; Escape returns to it. After a stale
+write, Shift-F11 explicitly abandons the edit and reopens latest activity. Nothing
+automatically merges or retries against a new revision.
+
+F8 opens an explicit finish confirmation: requires saved performed activity and
+no unresolved form, makes activity read-only, and optionally accepts an end time.
+F9 separately confirms permanent removal of a draft. Neither action updates a
+routine. Resize retains text. Unconfirmed forms are memory-only; confirmed edits
+survive restart. Normal and error exits restore the terminal. Noninteractive
+startup fails before opening the database.
 
 The `precision` library exposes the existing `Store` operations and supported
 application types to both adapters. Validation, decimals, migrations, and atomic
 storage remain shared. `tui::Session` provides the headless user-action/visible-state
 interface tested against temporary databases.
 
-On Unix, `cargo build` then `python3 tests/terminal_smoke.py` checks real
-keyboard delivery, resize, retained drafts, and terminal restoration via a PTY.
+On Unix, `cargo test --test terminal` checks real keyboard delivery, resize,
+confirmed recording recovery, and terminal restoration via a PTY (requires Python 3).
+After `cargo build`, `python3 tests/terminal_smoke.py` also runs it directly.
