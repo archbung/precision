@@ -29,9 +29,9 @@ impl Store {
         connection.pragma_update(None, "foreign_keys", true)?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 6 {
+        if version > 8 {
             return Err(format!(
-                "database schema version {version} is newer than supported version 6"
+                "database schema version {version} is newer than supported version 8"
             )
             .into());
         }
@@ -97,6 +97,17 @@ impl Store {
         if version < 6 {
             tx.execute_batch(include_str!("../migrations/0006.sql"))?;
             tx.pragma_update(None, "user_version", 6)?;
+        }
+        if version < 7 {
+            tx.execute_batch(include_str!("../migrations/0007.sql"))?;
+            tx.pragma_update(None, "user_version", 7)?;
+        }
+        if version < 8 {
+            // Seed only new databases: existing identities and user catalogs stay intact.
+            if version == 0 {
+                tx.execute_batch(include_str!("../migrations/0008.sql"))?;
+            }
+            tx.pragma_update(None, "user_version", 8)?;
         }
         tx.commit()?;
         Ok(Self { connection })

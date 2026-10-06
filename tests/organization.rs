@@ -1,7 +1,9 @@
+mod support;
 use serde_json::{Value, json};
 use std::process::{Command, Output};
 use tempfile::TempDir;
 fn run(db: &TempDir, args: &[&str]) -> Output {
+    support::empty_database(&db.path().join("db"));
     Command::new(env!("CARGO_BIN_EXE_precision"))
         .arg("--db")
         .arg(db.path().join("db"))

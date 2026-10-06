@@ -1,7 +1,9 @@
+mod support;
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
 fn run(db: &TempDir, args: &[&str]) -> Output {
+    support::empty_database(&db.path().join("precision.sqlite3"));
     Command::new(env!("CARGO_BIN_EXE_precision"))
         .arg("--db")
         .arg(db.path().join("precision.sqlite3"))
@@ -82,7 +84,7 @@ fn show(db: &TempDir, id: &str) -> serde_json::Value {
     serde_json::from_str(&success(db, &["exercise", "show", id, "--json"])).unwrap()
 }
 #[test]
-fn catalogs_are_exact_and_never_seed_exercises() {
+fn catalogs_are_exact_with_an_empty_exercise_fixture() {
     let db = TempDir::new().unwrap();
     assert_eq!(
         success(&db, &["catalog", "equipment"]),
@@ -90,7 +92,7 @@ fn catalogs_are_exact_and_never_seed_exercises() {
     );
     assert_eq!(
         success(&db, &["catalog", "muscles"]),
-        "1: Chest\n2: Back\n3: Shoulders\n4: Biceps\n5: Triceps\n6: Forearms\n7: Abdominals\n8: Glutes\n9: Quadriceps\n10: Hamstrings\n11: Calves\n12: Fullbody\n"
+        "1: Chest\n2: Back\n3: Shoulders\n4: Biceps\n5: Triceps\n6: Forearms\n7: Abdominals\n8: Glutes\n9: Quadriceps\n10: Hamstrings\n11: Calves\n12: Fullbody\n13: Adductors\n"
     );
     assert_eq!(success(&db, &["exercise", "list", "--json"]).trim(), "[]");
     failure(&db, &["catalog", "create"], "invalid value");
@@ -313,7 +315,7 @@ fn database_option_works_after_subcommands_and_default_is_documented() {
     let read = invoke(&[
         "exercise",
         "show",
-        "1",
+        "61",
         "--json",
         "--db",
         path.to_str().unwrap(),
@@ -365,5 +367,5 @@ fn concurrent_first_use_and_duplicate_names_save_only_one_exercise() {
     assert!(String::from_utf8_lossy(&failed.stderr).contains("already exists"));
     let list: serde_json::Value =
         serde_json::from_str(&success(&db, &["exercise", "list", "--json"])).unwrap();
-    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list.as_array().unwrap().len(), 61);
 }

@@ -4,6 +4,10 @@ A local CLI for exercise definitions and reusable workout routines, backed by
 SQLite. Build with `cargo build`;
 run `cargo run -- --help` or use `target/debug/precision`.
 
+New databases start with 60 exercises captured in migration 0008, including their
+equipment, primary muscles, and secondary muscles. Existing databases keep their
+exercise catalog unchanged. Starter exercises can be edited like user-created ones.
+
 The default database is `$HOME/.precision/precision.sqlite3` on every platform.
 All commands accept `--db PATH`, before or after subcommands. Parent directories
 are created on first use. To keep a separate catalog:
@@ -458,3 +462,7 @@ write transaction. Deleted or stale sources fail without partial changes;
 generate and review a fresh proposal before trying again. Every ordinary update
 and reviewed replacement advances the source revision. Workout intentions and
 performance stay unchanged; subsequent reuse reads the replaced current source.
+
+The bundled muscle catalog includes Adductors (ID 13) for hip adduction.
+Existing databases receive this entry automatically through migration 0007;
+all earlier muscle IDs remain stable.
